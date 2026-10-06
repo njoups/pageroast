@@ -1,0 +1,212 @@
+<!doctype html>
+<html lang="id">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Full SEO Audit · netpublik.id</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;600;700;800&display=swap" rel="stylesheet">
+<style>
+:root{
+  --bg:#F7F5F2;--card:#FFFDFB;--ink:#1B1530;--muted:#5A5468;--soft:#8A8496;--line:#E7E2DC;
+  --brand:#C2106D;--crit:#C1272D;--high:#B85400;--med:#8A6A00;--low:#2F7D4F;--ok:#2F7D4F;
+  --crit-bg:#FBE9EA;--high-bg:#FCEEE2;--med-bg:#F8F1DC;--low-bg:#E5F3EA;
+}
+@media (prefers-color-scheme: dark){:root:not([data-theme="light"]){
+  --bg:#141020;--card:#1E1930;--ink:#F2EFF7;--muted:#BDB6CC;--soft:#8F88A0;--line:#332C47;
+  --brand:#FF5AAA;--crit:#FF6B6F;--high:#FF9A4D;--med:#E8C547;--low:#5CC98A;--ok:#5CC98A;
+  --crit-bg:#3A1A22;--high-bg:#3A2616;--med-bg:#352D12;--low-bg:#163024;
+}}
+:root[data-theme="dark"]{
+  --bg:#141020;--card:#1E1930;--ink:#F2EFF7;--muted:#BDB6CC;--soft:#8F88A0;--line:#332C47;
+  --brand:#FF5AAA;--crit:#FF6B6F;--high:#FF9A4D;--med:#E8C547;--low:#5CC98A;--ok:#5CC98A;
+  --crit-bg:#3A1A22;--high-bg:#3A2616;--med-bg:#352D12;--low-bg:#163024;
+}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--ink);font:16px/1.55 'Plus Jakarta Sans',system-ui,-apple-system,Segoe UI,Arial,sans-serif}
+.wrap{max-width:1080px;margin:0 auto;padding:40px 16px 80px}
+header.hero{background:#1B1530;color:#F7F5F2;border-radius:20px;padding:36px 32px;display:grid;grid-template-columns:1fr auto;gap:24px;align-items:center}
+.eyebrow{font-size:13px;font-weight:700;letter-spacing:.12em;text-transform:uppercase;color:#FF5AAA}
+h1{font-size:clamp(28px,5vw,44px);line-height:1.1;margin:8px 0 10px;font-weight:800}
+.hero p{margin:0;color:#C9C3D6}
+.meta{display:flex;flex-wrap:wrap;gap:8px;margin-top:16px}
+.meta span{font-size:13px;background:#2A2342;border-radius:999px;padding:4px 12px;color:#DCD6E8}
+.score{width:150px;height:150px;border-radius:50%;display:grid;place-items:center;text-align:center;
+  background:conic-gradient(#FF5AAA calc(var(--v)*1%),#2A2342 0)}
+.score div{width:118px;height:118px;border-radius:50%;background:#1B1530;display:grid;place-items:center}
+.score b{font-size:42px;line-height:1}.score small{display:block;font-size:12px;color:#C9C3D6}
+h2{font-size:24px;margin:44px 0 14px;font-weight:800}
+.grid{display:grid;gap:14px}
+.cats{grid-template-columns:repeat(auto-fit,minmax(180px,1fr))}
+.card{background:var(--card);border:1px solid var(--line);border-radius:16px;padding:18px 20px}
+.cat .n{font-size:30px;font-weight:800}
+.bar{height:8px;background:var(--line);border-radius:4px;overflow:hidden;margin-top:8px}
+.bar i{display:block;height:100%;border-radius:4px}
+.summary li{margin:6px 0}
+.counts{grid-template-columns:repeat(auto-fit,minmax(140px,1fr))}
+.count{border-top:6px solid}.count b{font-size:36px;display:block;line-height:1.1}
+.toolbar{display:flex;flex-wrap:wrap;gap:8px;align-items:center;margin:8px 0 16px}
+.toolbar button{font:inherit;font-size:14px;border:1px solid var(--line);background:var(--card);color:var(--ink);border-radius:999px;padding:6px 14px;cursor:pointer}
+.toolbar button[aria-pressed="true"]{background:var(--ink);color:var(--bg);border-color:var(--ink)}
+.progress{margin-left:auto;font-size:14px;color:var(--muted)}
+.issue{display:grid;grid-template-columns:28px 1fr;gap:14px;align-items:start}
+.issue input{width:22px;height:22px;margin-top:3px;accent-color:var(--brand);cursor:pointer}
+.issue.done .t{text-decoration:line-through;color:var(--soft)}
+.t{font-weight:700;font-size:17px}
+.tags{display:flex;flex-wrap:wrap;gap:6px;margin:6px 0}
+.tag{font-size:12px;font-weight:700;border-radius:999px;padding:2px 10px;background:var(--line);color:var(--muted)}
+.p-crit{background:var(--crit-bg);color:var(--crit)}.p-high{background:var(--high-bg);color:var(--high)}
+.p-med{background:var(--med-bg);color:var(--med)}.p-low{background:var(--low-bg);color:var(--low)}
+details{margin-top:4px}summary{cursor:pointer;color:var(--brand);font-size:14px;font-weight:600}
+dl{display:grid;grid-template-columns:110px 1fr;gap:6px 12px;margin:10px 0 0;font-size:14px}
+dt{color:var(--soft);font-weight:600}dd{margin:0;color:var(--muted)}
+code{font-size:13px;background:var(--line);padding:1px 6px;border-radius:6px;word-break:break-word}
+.oklist li{list-style:none;margin:6px 0}.oklist li::before{content:"✔";color:var(--ok);font-weight:800;margin-right:10px}
+.oklist{padding:0}
+.plan{grid-template-columns:repeat(auto-fit,minmax(230px,1fr))}
+.plan h3{margin:0 0 6px;font-size:16px}.plan ol{margin:0;padding-left:20px;color:var(--muted);font-size:14px}
+table{width:100%;border-collapse:collapse;font-size:14px}
+th,td{text-align:left;padding:8px 10px;border-bottom:1px solid var(--line)}
+th{color:var(--soft);font-weight:600}
+.note{font-size:14px;color:var(--muted)}
+footer{margin-top:48px;font-size:13px;color:var(--soft)}
+@media (max-width:640px){header.hero{grid-template-columns:1fr}.score{width:120px;height:120px}.score div{width:94px;height:94px}.score b{font-size:32px}dl{grid-template-columns:1fr}}
+@media print{.toolbar{display:none}details{display:block}details>*{display:block}body{background:#fff}}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+<header class="hero">
+  <div>
+    <div class="eyebrow">Full SEO Audit · 6 Oktober 2026</div>
+    <h1>netpublik.id</h1>
+    <p>Media IT B2B Indonesia. Situs berita teknologi dengan 1.561 artikel dan 8 kategori.</p>
+    <div class="meta"><span>WordPress 7.0.2</span><span>Elementor 3.32</span><span>Rank Math</span><span>FlyingPress</span><span>Cloudflare</span><span>Site Kit</span></div>
+  </div>
+  <div class="score" style="--v:57"><div><span><b>57</b><small>dari 100<br>(estimasi)</small></span></div></div>
+</header>
+
+<h2>Skor per kategori</h2>
+<div class="grid cats" id="cats"></div>
+<p class="note">Skor ini estimasi dari jumlah dan bobot temuan per kategori, bukan skor resmi dari tool pihak ketiga.</p>
+
+<h2>Ringkasan eksekutif</h2>
+<div class="card summary">
+  <p style="margin-top:0">Pondasi teknisnya sudah oke: HTTPS, sitemap, robots.txt, canonical, dan noindex di halaman tag/search. Masalah terbesarnya ada di <b>setting yang salah dan berlaku ke seluruh situs</b>. Semuanya cepat diperbaiki dan dampaknya besar:</p>
+  <ol>
+    <li><b>Bahasa situs tertulis Inggris (<code>en-US</code>)</b> padahal isinya Bahasa Indonesia. Ini terjadi di semua halaman.</li>
+    <li><b>Meta description homepage berisi "October 10, 2025"</b>. Itu yang muncul di Google dan saat link dibagikan.</li>
+    <li><b>Homepage dan kategori tidak punya H1.</b></li>
+    <li><b>Homepage lambat di HP</b> (LCP sekitar 7,4 dtk) karena gambar utamanya di-lazy-load.</li>
+    <li><b>Penulis anonim</b> ("devadmin", "Editor"). Ini lemah untuk E-E-A-T situs berita.</li>
+  </ol>
+</div>
+
+<h2>Jumlah issue</h2>
+<div class="grid counts" id="counts"></div>
+
+<h2>Checklist issue</h2>
+<div class="toolbar" role="group" aria-label="Filter prioritas">
+  <button data-f="all" aria-pressed="true">Semua</button>
+  <button data-f="crit" aria-pressed="false">Kritis</button>
+  <button data-f="high" aria-pressed="false">High</button>
+  <button data-f="med" aria-pressed="false">Medium</button>
+  <button data-f="low" aria-pressed="false">Low</button>
+  <button data-f="open" aria-pressed="false">Belum selesai</button>
+  <span class="progress" id="progress"></span>
+</div>
+<div class="grid" id="issues"></div>
+
+<h2>Sudah benar</h2>
+<div class="card"><ul class="oklist">
+  <li>HTTPS aktif, dan <code>www</code> redirect 301 ke non-www</li>
+  <li>robots.txt bersih: hanya memblokir <code>/wp-admin/</code>, dan mencantumkan sitemap</li>
+  <li>Sitemap index Rank Math aktif: post (1.561), page (2), category (8)</li>
+  <li>Canonical self-referencing di homepage, artikel, dan kategori</li>
+  <li>Halaman tag dan search sudah <code>noindex, follow</code></li>
+  <li>Viewport mobile benar, tidak ada scroll horizontal, CLS rendah (0,008–0,075)</li>
+  <li>Tidak ada mixed content; daftar user di REST API tertutup (401)</li>
+</ul></div>
+
+<h2>Data teknis</h2>
+<div class="card" style="overflow-x:auto">
+<table>
+  <tr><th>Halaman</th><th>Title</th><th>H1</th><th>Meta desc.</th><th>LCP mobile</th><th>Request</th><th>Gambar tanpa alt</th></tr>
+  <tr><td>Homepage</td><td>Home - Netpublik</td><td>0</td><td>"October 10, 2025"</td><td>±7,4 dtk</td><td>151</td><td>182 / 359</td></tr>
+  <tr><td>Artikel (Cisco)</td><td>OK</td><td>1</td><td>OK</td><td>±1,6 dtk</td><td>125</td><td>17 / 26</td></tr>
+  <tr><td>Artikel (GPT-5.5)</td><td>OK</td><td>1</td><td>OK</td><td>n/a</td><td>n/a</td><td>19 / 26</td></tr>
+  <tr><td>Kategori AI</td><td>Artificial intelligence - Netpublik</td><td>0</td><td>Kosong</td><td>n/a</td><td>n/a</td><td>15 / 21</td></tr>
+</table>
+</div>
+
+<h2>Rencana aksi</h2>
+<div class="grid plan">
+  <div class="card"><h3>Minggu 1 · Kritis</h3><ol><li>Site Language → Bahasa Indonesia</li><li>Title + meta description homepage</li><li>H1 homepage dan kategori</li><li>Matikan lazy-load hero dan logo</li></ol></div>
+  <div class="card"><h3>Minggu 2–3 · High</h3><ol><li>Penulis dengan nama asli + halaman profil</li><li>Publisher Organization + sameAs</li><li>Schema homepage dan NewsArticle</li><li>News Sitemap + Publisher Center</li></ol></div>
+  <div class="card"><h3>Bulan 1 · Medium &amp; Low</h3><ol><li>Deskripsi dan intro 8 kategori</li><li>H2 dan alt text di artikel</li><li>Halaman Redaksi, Kontak, Pedoman Media Siber</li><li>WebP, redirect garis miring, uncategorized</li></ol></div>
+  <div class="card"><h3>Jangka panjang</h3><ol><li>Kurangi request Elementor</li><li>Klaster topik per kategori</li><li>Sudut pandang lokal di artikel rilis</li><li>Bangun link dari partner dan narasumber</li></ol></div>
+</div>
+
+<h2>Batasan audit</h2>
+<div class="card note">
+  <ul style="margin:0;padding-left:18px">
+    <li>Skor PageSpeed resmi tidak tersedia karena kuota API habis. Angka kecepatan berasal dari tes Chromium mobile dari server di AS, jadi angka asli di Indonesia bisa lebih baik. Cek ulang di pagespeed.web.dev.</li>
+    <li>Belum ada data Search Console, analytics, atau backlink. Indexing dan kata kunci belum dicek.</li>
+    <li>Sampel: homepage, 2 artikel, 1 kategori, halaman Tentang Kami, sitemap, dan robots.txt.</li>
+  </ul>
+</div>
+
+<footer>Full SEO Audit · netpublik.id · 6 Oktober 2026 · Status checklist tersimpan di browser ini.</footer>
+</div>
+
+<script>
+const CATS=[["Crawlability & Indexing",85],["Kecepatan & Mobile",55],["On-Page",45],["Schema",50],["Konten & E-E-A-T",50]];
+const P={crit:["Kritis","var(--crit)"],high:["High","var(--high)"],med:["Medium","var(--med)"],low:["Low","var(--low)"]};
+const ISSUES=[
+ ["crit","Teknis","Bahasa situs masih en-US","Semua halaman: <code>&lt;html lang=\"en-US\"&gt;</code>, <code>og:locale en_US</code>, schema <code>inLanguage: en-US</code>.","Settings › General › Site Language: Bahasa Indonesia, lalu clear cache FlyingPress dan Cloudflare."],
+ ["crit","On-Page","Meta description homepage berisi \"October 10, 2025\"","<code>description</code>, <code>og:description</code>, dan <code>twitter:description</code> semuanya \"October 10, 2025\".","Isi manual di Rank Math. Contoh: \"Netpublik: media IT B2B Indonesia. Berita terbaru AI, keamanan siber, infrastruktur IT, dan startup, plus podcast teknologi.\""],
+ ["crit","On-Page","Title homepage \"Home - Netpublik\"","<code>&lt;title&gt;Home - Netpublik&lt;/title&gt;</code>","Ganti jadi \"Netpublik – Berita Teknologi &amp; IT B2B Indonesia\"."],
+ ["crit","On-Page","Homepage tidak punya H1","Homepage: 0 H1, 0 H2; semua judul memakai H3.","Tambahkan H1 berkata kunci di Elementor (boleh disembunyikan secara visual)."],
+ ["crit","On-Page","Halaman kategori tidak punya H1","<code>/artikel/category/artificial-intelligence/</code>: 0 H1.","Jadikan judul arsip H1 di template kategori Elementor."],
+ ["crit","Kecepatan","Homepage lambat di HP (LCP ±7,4 dtk)","Tes Chromium mobile: FCP 3,8 dtk, LCP 7,4 dtk, 151 request, ±1,6 MB. Gambar LCP <code>agenticops2-Cisco-1024x576.jpg</code> memakai <code>loading=\"lazy\"</code>; ke-359 gambar di-lazy-load, termasuk logo.","Exclude gambar hero dan logo dari lazy-load di FlyingPress, lalu tambahkan <code>fetchpriority=\"high\"</code>."],
+ ["high","E-E-A-T","Penulis tertulis \"devadmin\" dan \"Editor\"","Schema author: <code>devadmin</code> (sameAs netpublik.id) dan <code>Editor</code>.","Buat akun per jurnalis dengan nama asli, foto, bio, dan link LinkedIn."],
+ ["high","Keamanan","Username admin terlihat publik","<code>/author/devadmin/</code> bisa diakses (200).","Ganti display name dan slug author, atau pindahkan artikelnya ke akun penulis."],
+ ["high","Schema","Publisher tertulis Person, bukan Organization","<code>publisher: #person</code>, tipe <code>[Person, Organization]</code>.","Rank Math › Titles &amp; Meta › Local SEO: Organization, isi logo, dan <code>sameAs</code> (YouTube, Instagram, LinkedIn, podcast)."],
+ ["high","Schema","Homepage ditandai schema Article","Schema homepage: Article \"Home - Netpublik\" dengan author devadmin.","Ubah jadi WebPage atau CollectionPage."],
+ ["high","Teknis","Belum ada News Sitemap","<code>/news-sitemap.xml</code> 404.","Aktifkan modul News Sitemap di Rank Math, lalu submit ke Search Console."],
+ ["high","Distribusi","Belum terdaftar di Google News","Tidak ada news sitemap atau tanda pendaftaran Publisher Center.","Daftar di Google Publisher Center."],
+ ["med","On-Page","8 kategori tanpa meta description","Meta description kategori AI kosong.","Tulis deskripsi 140–160 karakter per kategori di Rank Math."],
+ ["med","Konten","Kategori tanpa teks pengantar","±420 kata, semuanya daftar artikel.","Tambahkan intro 100–200 kata per kategori."],
+ ["med","On-Page","Judul kategori generik","\"Artificial intelligence - Netpublik\"","Pakai pola seperti \"Berita Artificial Intelligence Terbaru - Netpublik\"."],
+ ["med","Schema","Artikel bertipe BlogPosting","Schema artikel: <code>BlogPosting</code>.","Ganti default schema post ke NewsArticle."],
+ ["med","Konten","Artikel tanpa subjudul H2","Artikel sampel: 0 H2, isi ±350–380 kata.","Standarkan 2–3 H2 per artikel."],
+ ["med","On-Page","Banyak gambar tanpa alt","Homepage 182/359, artikel 17–19/26; logo <code>alt=\"\"</code>.","Isi alt di logo dan featured image. Thumbnail duplikat boleh tetap kosong."],
+ ["med","E-E-A-T","Halaman Redaksi, Kontak, dan Pedoman Media Siber belum ada","page-sitemap hanya berisi homepage dan Tentang Kami.","Buat halaman-halaman ini dan link dari footer."],
+ ["med","E-E-A-T","\"Tentang Kami\" tipis","±210 kata.","Perluas: visi, tim redaksi, kontak, kebijakan editorial."],
+ ["low","Teknis","URL tanpa garis miring di akhir tidak di-redirect","<code>/artikel/openai-luncurkan-gpt-5-5</code> 200 tanpa redirect (canonical sudah benar).","Paksa redirect 301 ke versi dengan <code>/</code>."],
+ ["low","Teknis","Kategori \"uncategorized\" bisa diindeks","Tercantum di <code>category-sitemap.xml</code>, index.","Pindahkan artikelnya, lalu noindex atau hapus kategorinya."],
+ ["low","Sosial","og:image kecil","Contoh: <code>OpenAI-2.png</code> 448×253.","Pakai minimal 1200×675 untuk Discover dan media sosial."],
+ ["low","Kecepatan","Hanya 5 dari 359 gambar yang WebP","Mayoritas JPG/PNG.","Aktifkan konversi WebP/AVIF."],
+ ["low","Kecepatan","151 request di homepage","59 script, 57 stylesheet.","Kurangi widget, script, dan CSS Elementor yang tidak dipakai."]
+];
+const KEY="netpublik-audit-2026-10-06";
+let done={};try{done=JSON.parse(localStorage.getItem(KEY)||"{}")}catch(e){}
+const save=()=>{try{localStorage.setItem(KEY,JSON.stringify(done))}catch(e){}};
+const col=v=>v>=75?"var(--low)":v>=55?"var(--med)":"var(--crit)";
+document.getElementById("cats").innerHTML=CATS.map(([n,v])=>`<div class="card cat"><div class="note">${n}</div><div class="n" style="color:${col(v)}">${v}</div><div class="bar"><i style="width:${v}%;background:${col(v)}"></i></div></div>`).join("");
+document.getElementById("counts").innerHTML=Object.entries(P).map(([k,[l,c]])=>`<div class="card count" style="border-top-color:${c}"><b style="color:${c}">${ISSUES.filter(i=>i[0]===k).length}</b>${l}</div>`).join("")+`<div class="card count" style="border-top-color:var(--ink)"><b>${ISSUES.length}</b>Total</div>`;
+const box=document.getElementById("issues");
+box.innerHTML=ISSUES.map((i,n)=>`<div class="card issue" data-p="${i[0]}" data-n="${n}"><input type="checkbox" id="c${n}" aria-label="Tandai selesai: ${i[2].replace(/"/g,'&quot;')}"><div><label for="c${n}" class="t">${i[2]}</label><div class="tags"><span class="tag p-${i[0]}">${P[i[0]][0]}</span><span class="tag">${i[1]}</span></div><details><summary>Bukti &amp; perbaikan</summary><dl><dt>Bukti</dt><dd>${i[3]}</dd><dt>Perbaikan</dt><dd>${i[4]}</dd></dl></details></div></div>`).join("");
+let filter="all";
+function render(){
+  box.querySelectorAll(".issue").forEach(el=>{const n=el.dataset.n,d=!!done[n];el.classList.toggle("done",d);el.querySelector("input").checked=d;
+    el.style.display=(filter==="all"||filter===el.dataset.p||(filter==="open"&&!d))?"":"none";});
+  const c=Object.values(done).filter(Boolean).length;document.getElementById("progress").textContent=`${c} / ${ISSUES.length} selesai`;
+}
+box.addEventListener("change",e=>{const el=e.target.closest(".issue");done[el.dataset.n]=e.target.checked;save();render();});
+document.querySelectorAll(".toolbar button").forEach(b=>b.onclick=()=>{filter=b.dataset.f;document.querySelectorAll(".toolbar button").forEach(x=>x.setAttribute("aria-pressed",x===b));render();});
+render();
+</script>
+</body>
+</html>
