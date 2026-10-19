@@ -21,13 +21,21 @@ export class MentionsQuery {
   @IsOptional() @Transform(({ value }) => value === 'true' || value === true) includeDuplicates?: boolean;
   @IsOptional() @Type(() => Number) @IsInt() @Min(1) @Max(100) limit?: number;
   @IsOptional() @Type(() => Number) @IsInt() @Min(0) @Max(10000) offset?: number;
+  @IsOptional() @Matches(/^(custom:)?[a-z_0-9]{2,40}$/) topic?: string;
+  @IsOptional() @IsUUID() entityId?: string;
+  @IsOptional() @IsIn(['positive', 'negative', 'neutral', 'mixed', 'unknown']) sentiment?: string;
+  @IsOptional() @IsUUID() clusterId?: string;
 }
 
 const ITEM_COLS = `m.id, m.title, m.url, m.canonical_url, m.publisher, m.publisher_domain, m.excerpt, m.author, m.categories, m.language,
   m.published_at, m.discovered_at, m.last_seen_at, m.source_id, s.name AS source_name, m.source_type, m.duplicate_status, m.duplicate_of,
   m.duplicate_reason, m.processing_status, m.availability, m.retention_expires_at, m.last_verified_at,
   m.provenance->'licence'->>'attribution' AS attribution, m.provenance->'licence'->>'redistributionRestrictions' AS redistribution_restrictions,
-  m.provenance->>'connector' AS connector, m.provenance->>'runId' AS run_id, m.provenance->>'gdeltSeenAt' AS gdelt_seen_at`;
+  m.provenance->>'connector' AS connector, m.provenance->>'runId' AS run_id, m.provenance->>'gdeltSeenAt' AS gdelt_seen_at,
+  m.detected_language, m.cluster_id,
+  (SELECT jsonb_build_object('label', sr.label, 'confidence', sr.confidence, 'uncertain', sr.uncertain, 'method', sr.method)
+     FROM sentiment_results sr WHERE sr.analysis_id = m.analysis_id AND sr.target_type = 'article' LIMIT 1) AS sentiment,
+  coalesce((SELECT jsonb_agg(mt.topic_key ORDER BY mt.confidence DESC) FROM mention_topics mt WHERE mt.analysis_id = m.analysis_id AND mt.topic_key <> 'unknown'), '[]'::jsonb) AS topics`;
 
 @Injectable()
 export class MentionsService {
@@ -51,6 +59,10 @@ export class MentionsService {
       }
       if (!f.includeDuplicates) where.push(`m.duplicate_status = 'original'`);
       if (f.sourceId) where.push(`m.source_id = ${add(f.sourceId)}`);
+      if (f.topic) where.push(`EXISTS (SELECT 1 FROM mention_topics mt WHERE mt.mention_id = m.id AND mt.analysis_id = m.analysis_id AND mt.topic_key = ${add(f.topic)})`);
+      if (f.entityId) where.push(`EXISTS (SELECT 1 FROM mention_entities me WHERE me.mention_id = m.id AND me.analysis_id = m.analysis_id AND me.entity_id = ${add(f.entityId)})`);
+      if (f.sentiment) where.push(`EXISTS (SELECT 1 FROM sentiment_results sr WHERE sr.mention_id = m.id AND sr.analysis_id = m.analysis_id AND sr.target_type = 'article' AND sr.label = ${add(f.sentiment)})`);
+      if (f.clusterId) where.push(`m.cluster_id = ${add(f.clusterId)}`);
       if (f.language) where.push(`m.language = ${add(f.language)}`);
       const dateCol = f.dateField === 'published' ? 'm.published_at' : 'm.discovered_at';
       if (f.from) where.push(`${dateCol} >= ${add(f.from)}::timestamptz`);

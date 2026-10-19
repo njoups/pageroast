@@ -1,4 +1,5 @@
-import { Inject, Injectable } from '@nestjs/common';
+import { Inject, Injectable, Optional } from '@nestjs/common';
+import { AnalysisEnqueuer } from '../analysis/analysis-queue';
 import type { PoolClient } from 'pg';
 import { AppConfig, CONFIG } from '../config';
 import { Database } from '../database/database.service';
@@ -53,6 +54,7 @@ export class IngestionPipeline {
     @Inject(CONFIG) private readonly config: AppConfig,
     @Inject(SAFE_HTTP) private readonly http: SafeHttpClient,
     @Inject(CREDENTIAL_CIPHER) private readonly cipher: CredentialCipher | null,
+    @Optional() private readonly analysis?: AnalysisEnqueuer,
   ) {}
 
   private loadSource(c: PoolClient, sourceId: string) {
@@ -116,7 +118,11 @@ export class IngestionPipeline {
       throw err;
     }
 
-    const counts = await this.persist(job, src, runId, fetched, Date.now() - started, skippedForCache);
+    const { counts, newOriginals } = await this.persist(job, src, runId, fetched, Date.now() - started, skippedForCache);
+    // Hand new originals to the AI pipeline after commit. An AI/queue problem never fails the collection run.
+    if (newOriginals.length && this.analysis?.available) {
+      await this.analysis.enqueueMentions(job.tenantId, newOriginals, 'ingestion').catch((e) => logEvent('error', 'ingestion.analysis_enqueue_failed', { ...log, message: (e as Error).message }));
+    }
     logEvent('info', 'ingestion.run_succeeded', { ...log, ...counts, notModified: fetched.status === 'not_modified', skippedForCache, durationMs: Date.now() - started });
     return { status: 'succeeded', runId, counts, notModified: fetched.status === 'not_modified', skippedForCache };
   }
@@ -145,7 +151,7 @@ export class IngestionPipeline {
       [tenantId, metric, qty, JSON.stringify({ sourceId })]);
   }
 
-  private async persist(job: CollectJob, src: SourceRow, runId: string, fetched: FetchResult, fetchMs: number, skippedForCache: boolean): Promise<RunCounts> {
+  private async persist(job: CollectJob, src: SourceRow, runId: string, fetched: FetchResult, fetchMs: number, skippedForCache: boolean): Promise<{ counts: RunCounts; newOriginals: string[] }> {
     const permitted = new Set(src.permitted_fields);
     const counts: RunCounts = { seen: fetched.records.length, new: 0, known: 0, duplicate: 0, rejected: fetched.rejected.length, matches: 0 };
     const rejections: Array<{ reason: string; index?: number; url?: string }> = fetched.rejected.slice(0, 20).map((r) => ({ ...r }));
@@ -167,6 +173,7 @@ export class IngestionPipeline {
     stages.validate = 'ok'; stages.normalize = 'ok';
 
     const sys = job.requestedBy ?? '00000000-0000-0000-0000-000000000000';
+    const newOriginals: string[] = [];
     return this.db.withTenant(job.tenantId, sys, async (c) => {
       // Deduplicate: known canonical URLs first.
       const existing = valid.length
@@ -236,6 +243,7 @@ export class IngestionPipeline {
         counts.new++;
         if (decision.status !== 'original') { counts.duplicate++; continue; } // duplicates are linked, not re-matched
         candidates.push({ id, publisherDomain: f.domain, normalizedTitle: f.nTitle, contentHash: f.hash });
+        newOriginals.push(id);
         if (compiled.length) {
           const doc = new MatchDocument([f.rec.title, f.excerpt ?? '', body ?? ''].join('\n'));
           for (const q of compiled) {
@@ -250,7 +258,7 @@ export class IngestionPipeline {
       }
       stages.match = compiled.length ? 'ok' : 'no_active_queries';
       stages.persist = 'ok';
-      stages.queue_analysis = 'not_implemented:milestone_3';   // records stay processing_status = 'pending'
+      stages.queue_analysis = this.analysis?.available ? `queued_after_commit:${newOriginals.length}` : 'queue_unavailable';
       stages.search_index = 'ok:generated_column';             // mentions.search_tsv is maintained by PostgreSQL
       stages.alerts = 'not_implemented:milestone_4';
 
@@ -274,7 +282,7 @@ export class IngestionPipeline {
            stages = $11, rejections = $12, error = NULL WHERE id = $1`,
         [runId, fetchMs, fetched.httpStatus || null, fetched.status === 'not_modified', counts.seen, counts.new, counts.known,
           counts.duplicate, counts.rejected, counts.matches, JSON.stringify(stages), JSON.stringify(rejections.slice(0, 20))]);
-      return counts;
+      return { counts, newOriginals };
     });
   }
 

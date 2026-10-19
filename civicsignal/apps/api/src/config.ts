@@ -29,6 +29,24 @@ export interface AppConfig {
     hostSpacingMs: Record<string, number>;
     defaultHostSpacingMs: number;
   };
+  ai: {
+    /** 'anthropic' (LLM), 'baseline' (rule-based, no network) or 'test' (deterministic fixtures; refused in production). */
+    provider: 'anthropic' | 'baseline' | 'test';
+    anthropicApiKey: string | null;
+    anthropicBaseUrl: string;
+    model: string;
+    effort: 'low' | 'medium' | 'high' | 'xhigh' | 'max';
+    timeoutMs: number;
+    refusalFallback: boolean;
+    /** What to do when the provider keeps failing or is unconfigured: run the baseline (recorded as such) or fail. */
+    fallback: 'baseline' | 'none';
+    concurrency: number;
+    requestsPerMinute: number;
+    attempts: number;
+    backoffBaseMs: number;
+    clusterThreshold: number;
+    clusterWindowHours: number;
+  };
 }
 
 function parseHostSpacing(v: string | undefined): Record<string, number> {
@@ -77,13 +95,34 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
       hostSpacingMs: parseHostSpacing(env.INGESTION_HOST_SPACING),
       defaultHostSpacingMs: Number(env.INGESTION_DEFAULT_HOST_SPACING_MS ?? 1000),
     },
+    ai: {
+      provider: (env.AI_PROVIDER as AppConfig['ai']['provider']) ?? (env.ANTHROPIC_API_KEY ? 'anthropic' : 'baseline'),
+      anthropicApiKey: env.ANTHROPIC_API_KEY || null,
+      // Explicit default so an ambient ANTHROPIC_BASE_URL (e.g. a developer tool's proxy) is never inherited.
+      anthropicBaseUrl: env.AI_ANTHROPIC_BASE_URL ?? 'https://api.anthropic.com',
+      model: env.AI_MODEL ?? 'claude-opus-5-5',
+      effort: (env.AI_EFFORT as AppConfig['ai']['effort']) ?? 'low',
+      timeoutMs: Number(env.AI_TIMEOUT_MS ?? 60_000),
+      refusalFallback: env.AI_REFUSAL_FALLBACK !== 'off',
+      fallback: env.AI_FALLBACK === 'none' ? 'none' : 'baseline',
+      concurrency: Number(env.AI_CONCURRENCY ?? 2),
+      requestsPerMinute: Number(env.AI_REQUESTS_PER_MINUTE ?? 30),
+      attempts: Number(env.AI_ATTEMPTS ?? 4),
+      backoffBaseMs: Number(env.AI_BACKOFF_BASE_MS ?? 20_000),
+      clusterThreshold: Number(env.CLUSTER_THRESHOLD ?? 0.42),
+      clusterWindowHours: Number(env.CLUSTER_WINDOW_HOURS ?? 72),
+    },
   };
+  if (!['anthropic', 'baseline', 'test'].includes(cfg.ai.provider)) throw new Error('AI_PROVIDER must be anthropic, baseline or test');
+  if (!['low', 'medium', 'high', 'xhigh', 'max'].includes(cfg.ai.effort)) throw new Error('AI_EFFORT must be low|medium|high|xhigh|max');
   if (prod) {
     if (!cfg.cookieSecure) throw new Error('COOKIE_SECURE must be true in production');
     if (cfg.scryptN < 2 ** 15) throw new Error('SCRYPT_N must be >= 32768 in production');
     if (!env.MIGRATION_DATABASE_URL) throw new Error('MIGRATION_DATABASE_URL must be set explicitly in production');
     if (cfg.migrationDatabaseUrl === cfg.databaseUrl) throw new Error('Application and migration database roles must differ in production');
     if (cfg.ingestion.allowPrivateHosts) throw new Error('INGESTION_ALLOW_PRIVATE_HOSTS is for tests only and is refused in production');
+    if (cfg.ai.provider === 'test') throw new Error('AI_PROVIDER=test is for automated tests only and is refused in production');
+    if (cfg.ai.provider === 'anthropic' && !cfg.ai.anthropicApiKey) throw new Error('AI_PROVIDER=anthropic requires ANTHROPIC_API_KEY');
   }
   return cfg;
 }

@@ -10,6 +10,10 @@ import { INGESTION_QUEUE, IngestionCoreModule, REDIS } from './ingestion/ingesti
 import { logEvent } from './ingestion/log';
 import { IngestionPipeline, type CollectJob } from './ingestion/pipeline.service';
 import { createWorker, KEY_PREFIX, schedulerTick, type Redis } from './ingestion/queue';
+import { AnalysisEnqueuer, createAnalysisWorker, registerPromptVersions } from './analysis/analysis-queue';
+import { AnalysisService } from './analysis/analysis.service';
+import { SummariesService } from './analysis/summaries.service';
+import { ANALYSIS_PROVIDER, type AnalysisProvider } from './analysis/providers';
 
 @Module({ imports: [DatabaseModule, IngestionCoreModule] })
 class WorkerModule {}
@@ -30,7 +34,13 @@ async function main() {
   const runConsumer = !process.argv.includes('--no-consumer');
   const runScheduler = !process.argv.includes('--no-scheduler');
 
+  await registerPromptVersions(db);
   const consumer = runConsumer ? createWorker({ config, db, pipeline: ctx.get(IngestionPipeline) }) : null;
+  const provider = ctx.get<AnalysisProvider>(ANALYSIS_PROVIDER);
+  const analysisWorker = runConsumer && !process.argv.includes('--no-analysis')
+    ? createAnalysisWorker({ config, analysis: ctx.get(AnalysisService), summaries: ctx.get(SummariesService), enqueuer: ctx.get(AnalysisEnqueuer), redis, provider })
+    : null;
+  logEvent('info', 'analysis.provider', { provider: provider.name, model: provider.model, method: provider.method });
   const beat = () => redis.set(`${KEY_PREFIX}:worker:heartbeat:${id}`, JSON.stringify({ at: new Date().toISOString(), consumer: runConsumer, scheduler: runScheduler }), 'EX', 60);
   await beat();
   const heartbeat = setInterval(() => void beat().catch(() => undefined), 15_000);
@@ -48,6 +58,7 @@ async function main() {
     if (scheduler) clearInterval(scheduler);
     clearInterval(heartbeat);
     await consumer?.worker.close();   // waits for in-flight jobs
+    await analysisWorker?.close();
     await consumer?.dlq.close();
     consumer?.redis.disconnect();
     await redis.del(`${KEY_PREFIX}:worker:heartbeat:${id}`).catch(() => undefined);

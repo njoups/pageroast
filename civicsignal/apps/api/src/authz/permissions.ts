@@ -10,6 +10,7 @@ export const PERMISSIONS = [
   // Reserved for later milestones; listed now so the matrix is reviewed once.
   'sources:read', 'sources:manage', 'mentions:read', 'alerts:read', 'alerts:acknowledge', 'alerts:manage',
   'reports:read', 'reports:generate', 'billing:read', 'billing:manage', 'retention:manage', 'data:export', 'data:delete',
+  'analysis:reprocess', 'ai:settings',
 ] as const;
 export type Permission = (typeof PERMISSIONS)[number];
 
@@ -17,7 +18,7 @@ const PM: Permission[] = [
   'org:read', 'members:read',
   'projects:read', 'projects:create', 'projects:update', 'projects:archive', 'projects:manage_members',
   'sources:read', 'sources:manage', 'mentions:read', 'alerts:read', 'alerts:acknowledge', 'alerts:manage',
-  'reports:read', 'reports:generate',
+  'reports:read', 'reports:generate', 'analysis:reprocess',
 ];
 const ANALYST: Permission[] = [
   'org:read', 'members:read', 'projects:read', 'sources:read', 'mentions:read',

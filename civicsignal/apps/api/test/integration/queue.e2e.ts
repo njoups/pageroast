@@ -135,6 +135,9 @@ describe('ingestion queue and worker (e2e, Redis)', () => {
   });
 
   it('per-source rate limit defers excess collections to the next minute', async () => {
+    // The limiter uses fixed per-minute windows; both collects must land in the same window for the assertion to hold.
+    const sec = new Date().getUTCSeconds();
+    if (sec >= 50) await new Promise((r) => setTimeout(r, (61 - sec) * 1000));
     const id = await mkSource('/rl', { rateLimitPerMinute: 1 });
     await http().post(`/api/v1/organizations/${org}/sources/${id}/collect`).set('Cookie', owner.cookie).expect(202);
     await until(() => runRow(id, 'succeeded'));

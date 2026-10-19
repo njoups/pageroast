@@ -1,5 +1,6 @@
 import { Inject, Injectable, Module, OnModuleDestroy } from '@nestjs/common';
 import { Queue } from 'bullmq';
+import { AnalysisCoreModule } from '../analysis/analysis-queue';
 import { AppConfig, CONFIG } from '../config';
 import { createQueue, createRedis, DLQ, KEY_PREFIX, redisConnection, type Redis } from './queue';
 import { CREDENTIAL_CIPHER, IngestionPipeline, SAFE_HTTP, type CollectJob } from './pipeline.service';
@@ -23,6 +24,7 @@ class QueueLifecycle implements OnModuleDestroy {
 
 /** Shared by the API (producer side) and the worker process. Queue/Redis are null when REDIS_URL is not configured. */
 @Module({
+  imports: [AnalysisCoreModule],
   providers: [
     {
       provide: SAFE_HTTP, inject: [CONFIG],
@@ -37,6 +39,6 @@ class QueueLifecycle implements OnModuleDestroy {
     { provide: INGESTION_DLQ, inject: [CONFIG], useFactory: (c: AppConfig) => (c.redisUrl ? new Queue(DLQ, { connection: redisConnection(c.redisUrl), prefix: KEY_PREFIX }) : null) },
     IngestionPipeline, QueueLifecycle,
   ],
-  exports: [SAFE_HTTP, CREDENTIAL_CIPHER, INGESTION_QUEUE, INGESTION_DLQ, REDIS, IngestionPipeline],
+  exports: [SAFE_HTTP, CREDENTIAL_CIPHER, INGESTION_QUEUE, INGESTION_DLQ, REDIS, IngestionPipeline, AnalysisCoreModule],
 })
 export class IngestionCoreModule {}

@@ -1,0 +1,504 @@
+{
+  "provider": "baseline",
+  "model": "civicsignal-baseline",
+  "method": "baseline",
+  "evaluatedAt": "2026-10-19T16:44:46.151Z",
+  "dataset": "test/fixtures/eval/eval-set.json (v1, synthetic, used during development)",
+  "lang": {
+    "macroF1": 0.9806938159879337,
+    "accuracy": 0.9841269841269841,
+    "perClass": [
+      {
+        "label": "id",
+        "precision": 1,
+        "recall": 0.9615384615384616,
+        "f1": 0.9803921568627451,
+        "support": 26
+      },
+      {
+        "label": "en",
+        "precision": 1,
+        "recall": 1,
+        "f1": 1,
+        "support": 25
+      },
+      {
+        "label": "ms",
+        "precision": 1,
+        "recall": 1,
+        "f1": 1,
+        "support": 4
+      },
+      {
+        "label": "jv",
+        "precision": 1,
+        "recall": 1,
+        "f1": 1,
+        "support": 2
+      },
+      {
+        "label": "und",
+        "precision": 0.8571428571428571,
+        "recall": 1,
+        "f1": 0.923076923076923,
+        "support": 6
+      }
+    ],
+    "confusion": {
+      "id": {
+        "id": 25,
+        "en": 0,
+        "ms": 0,
+        "jv": 0,
+        "und": 1,
+        "unknown": 0
+      },
+      "en": {
+        "id": 0,
+        "en": 25,
+        "ms": 0,
+        "jv": 0,
+        "und": 0,
+        "unknown": 0
+      },
+      "ms": {
+        "id": 0,
+        "en": 0,
+        "ms": 4,
+        "jv": 0,
+        "und": 0,
+        "unknown": 0
+      },
+      "jv": {
+        "id": 0,
+        "en": 0,
+        "ms": 0,
+        "jv": 2,
+        "und": 0,
+        "unknown": 0
+      },
+      "und": {
+        "id": 0,
+        "en": 0,
+        "ms": 0,
+        "jv": 0,
+        "und": 6,
+        "unknown": 0
+      }
+    }
+  },
+  "sentiment": {
+    "macroF1": 0.7904135338345865,
+    "accuracy": 0.8627450980392157,
+    "perClass": [
+      {
+        "label": "positive",
+        "precision": 0.9230769230769231,
+        "recall": 0.8,
+        "f1": 0.8571428571428571,
+        "support": 15
+      },
+      {
+        "label": "negative",
+        "precision": 0.9,
+        "recall": 1,
+        "f1": 0.9473684210526316,
+        "support": 18
+      },
+      {
+        "label": "neutral",
+        "precision": 0.8571428571428571,
+        "recall": 0.8571428571428571,
+        "f1": 0.8571428571428571,
+        "support": 14
+      },
+      {
+        "label": "mixed",
+        "precision": 0.5,
+        "recall": 0.5,
+        "f1": 0.5,
+        "support": 4
+      }
+    ],
+    "confusion": {
+      "positive": {
+        "positive": 12,
+        "negative": 0,
+        "neutral": 1,
+        "mixed": 2,
+        "unknown": 0
+      },
+      "negative": {
+        "positive": 0,
+        "negative": 18,
+        "neutral": 0,
+        "mixed": 0,
+        "unknown": 0
+      },
+      "neutral": {
+        "positive": 0,
+        "negative": 2,
+        "neutral": 12,
+        "mixed": 0,
+        "unknown": 0
+      },
+      "mixed": {
+        "positive": 1,
+        "negative": 0,
+        "neutral": 1,
+        "mixed": 2,
+        "unknown": 0
+      }
+    }
+  },
+  "topic": {
+    "macroF1": 0.9285714285714286,
+    "accuracy": 0.9607843137254902,
+    "perClass": [
+      {
+        "label": "corporate_reputation",
+        "precision": 1,
+        "recall": 1,
+        "f1": 1,
+        "support": 2
+      },
+      {
+        "label": "economy",
+        "precision": 1,
+        "recall": 1,
+        "f1": 1,
+        "support": 6
+      },
+      {
+        "label": "education",
+        "precision": 1,
+        "recall": 1,
+        "f1": 1,
+        "support": 4
+      },
+      {
+        "label": "environment",
+        "precision": 1,
+        "recall": 1,
+        "f1": 1,
+        "support": 3
+      },
+      {
+        "label": "government_policy",
+        "precision": 1,
+        "recall": 1,
+        "f1": 1,
+        "support": 5
+      },
+      {
+        "label": "health",
+        "precision": 1,
+        "recall": 1,
+        "f1": 1,
+        "support": 4
+      },
+      {
+        "label": "infrastructure",
+        "precision": 1,
+        "recall": 1,
+        "f1": 1,
+        "support": 4
+      },
+      {
+        "label": "international_affairs",
+        "precision": 1,
+        "recall": 1,
+        "f1": 1,
+        "support": 2
+      },
+      {
+        "label": "other",
+        "precision": 0,
+        "recall": 0,
+        "f1": 0,
+        "support": 2
+      },
+      {
+        "label": "public_communication",
+        "precision": 1,
+        "recall": 1,
+        "f1": 1,
+        "support": 4
+      },
+      {
+        "label": "public_safety",
+        "precision": 1,
+        "recall": 1,
+        "f1": 1,
+        "support": 6
+      },
+      {
+        "label": "public_services",
+        "precision": 1,
+        "recall": 1,
+        "f1": 1,
+        "support": 5
+      },
+      {
+        "label": "technology",
+        "precision": 1,
+        "recall": 1,
+        "f1": 1,
+        "support": 2
+      },
+      {
+        "label": "transportation",
+        "precision": 1,
+        "recall": 1,
+        "f1": 1,
+        "support": 2
+      }
+    ],
+    "confusion": {
+      "corporate_reputation": {
+        "corporate_reputation": 2,
+        "economy": 0,
+        "education": 0,
+        "environment": 0,
+        "government_policy": 0,
+        "health": 0,
+        "infrastructure": 0,
+        "international_affairs": 0,
+        "other": 0,
+        "public_communication": 0,
+        "public_safety": 0,
+        "public_services": 0,
+        "technology": 0,
+        "transportation": 0,
+        "unknown": 0
+      },
+      "economy": {
+        "corporate_reputation": 0,
+        "economy": 6,
+        "education": 0,
+        "environment": 0,
+        "government_policy": 0,
+        "health": 0,
+        "infrastructure": 0,
+        "international_affairs": 0,
+        "other": 0,
+        "public_communication": 0,
+        "public_safety": 0,
+        "public_services": 0,
+        "technology": 0,
+        "transportation": 0,
+        "unknown": 0
+      },
+      "education": {
+        "corporate_reputation": 0,
+        "economy": 0,
+        "education": 4,
+        "environment": 0,
+        "government_policy": 0,
+        "health": 0,
+        "infrastructure": 0,
+        "international_affairs": 0,
+        "other": 0,
+        "public_communication": 0,
+        "public_safety": 0,
+        "public_services": 0,
+        "technology": 0,
+        "transportation": 0,
+        "unknown": 0
+      },
+      "environment": {
+        "corporate_reputation": 0,
+        "economy": 0,
+        "education": 0,
+        "environment": 3,
+        "government_policy": 0,
+        "health": 0,
+        "infrastructure": 0,
+        "international_affairs": 0,
+        "other": 0,
+        "public_communication": 0,
+        "public_safety": 0,
+        "public_services": 0,
+        "technology": 0,
+        "transportation": 0,
+        "unknown": 0
+      },
+      "government_policy": {
+        "corporate_reputation": 0,
+        "economy": 0,
+        "education": 0,
+        "environment": 0,
+        "government_policy": 5,
+        "health": 0,
+        "infrastructure": 0,
+        "international_affairs": 0,
+        "other": 0,
+        "public_communication": 0,
+        "public_safety": 0,
+        "public_services": 0,
+        "technology": 0,
+        "transportation": 0,
+        "unknown": 0
+      },
+      "health": {
+        "corporate_reputation": 0,
+        "economy": 0,
+        "education": 0,
+        "environment": 0,
+        "government_policy": 0,
+        "health": 4,
+        "infrastructure": 0,
+        "international_affairs": 0,
+        "other": 0,
+        "public_communication": 0,
+        "public_safety": 0,
+        "public_services": 0,
+        "technology": 0,
+        "transportation": 0,
+        "unknown": 0
+      },
+      "infrastructure": {
+        "corporate_reputation": 0,
+        "economy": 0,
+        "education": 0,
+        "environment": 0,
+        "government_policy": 0,
+        "health": 0,
+        "infrastructure": 4,
+        "international_affairs": 0,
+        "other": 0,
+        "public_communication": 0,
+        "public_safety": 0,
+        "public_services": 0,
+        "technology": 0,
+        "transportation": 0,
+        "unknown": 0
+      },
+      "international_affairs": {
+        "corporate_reputation": 0,
+        "economy": 0,
+        "education": 0,
+        "environment": 0,
+        "government_policy": 0,
+        "health": 0,
+        "infrastructure": 0,
+        "international_affairs": 2,
+        "other": 0,
+        "public_communication": 0,
+        "public_safety": 0,
+        "public_services": 0,
+        "technology": 0,
+        "transportation": 0,
+        "unknown": 0
+      },
+      "other": {
+        "corporate_reputation": 0,
+        "economy": 0,
+        "education": 0,
+        "environment": 0,
+        "government_policy": 0,
+        "health": 0,
+        "infrastructure": 0,
+        "international_affairs": 0,
+        "other": 0,
+        "public_communication": 0,
+        "public_safety": 0,
+        "public_services": 0,
+        "technology": 0,
+        "transportation": 0,
+        "unknown": 2
+      },
+      "public_communication": {
+        "corporate_reputation": 0,
+        "economy": 0,
+        "education": 0,
+        "environment": 0,
+        "government_policy": 0,
+        "health": 0,
+        "infrastructure": 0,
+        "international_affairs": 0,
+        "other": 0,
+        "public_communication": 4,
+        "public_safety": 0,
+        "public_services": 0,
+        "technology": 0,
+        "transportation": 0,
+        "unknown": 0
+      },
+      "public_safety": {
+        "corporate_reputation": 0,
+        "economy": 0,
+        "education": 0,
+        "environment": 0,
+        "government_policy": 0,
+        "health": 0,
+        "infrastructure": 0,
+        "international_affairs": 0,
+        "other": 0,
+        "public_communication": 0,
+        "public_safety": 6,
+        "public_services": 0,
+        "technology": 0,
+        "transportation": 0,
+        "unknown": 0
+      },
+      "public_services": {
+        "corporate_reputation": 0,
+        "economy": 0,
+        "education": 0,
+        "environment": 0,
+        "government_policy": 0,
+        "health": 0,
+        "infrastructure": 0,
+        "international_affairs": 0,
+        "other": 0,
+        "public_communication": 0,
+        "public_safety": 0,
+        "public_services": 5,
+        "technology": 0,
+        "transportation": 0,
+        "unknown": 0
+      },
+      "technology": {
+        "corporate_reputation": 0,
+        "economy": 0,
+        "education": 0,
+        "environment": 0,
+        "government_policy": 0,
+        "health": 0,
+        "infrastructure": 0,
+        "international_affairs": 0,
+        "other": 0,
+        "public_communication": 0,
+        "public_safety": 0,
+        "public_services": 0,
+        "technology": 2,
+        "transportation": 0,
+        "unknown": 0
+      },
+      "transportation": {
+        "corporate_reputation": 0,
+        "economy": 0,
+        "education": 0,
+        "environment": 0,
+        "government_policy": 0,
+        "health": 0,
+        "infrastructure": 0,
+        "international_affairs": 0,
+        "other": 0,
+        "public_communication": 0,
+        "public_safety": 0,
+        "public_services": 0,
+        "technology": 0,
+        "transportation": 2,
+        "unknown": 0
+      }
+    }
+  },
+  "failures": 0,
+  "n": {
+    "all": 63,
+    "supported": 51,
+    "sentiment": 51
+  }
+}

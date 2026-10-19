@@ -1,4 +1,5 @@
 import { Module } from '@nestjs/common';
+import { AnalysisApiService, AnalysisController } from './analysis/analysis-api';
 import { AuditController } from './audit/audit.controller';
 import { AuditService } from './audit/audit.service';
 import { AuthController } from './auth/auth.controller';
@@ -23,11 +24,11 @@ import { ProjectsService } from './projects/projects.service';
 @Module({
   imports: [DatabaseModule, IngestionCoreModule],
   controllers: [AuthController, OrganizationsController, InvitationsController, ProjectsController, AuditController, HealthController, PlatformController,
-    SourcesController, QueriesController, MentionsController],
+    SourcesController, QueriesController, MentionsController, AnalysisController],
   providers: [
     { provide: IDENTITY_PROVIDER, useClass: LocalIdentityProvider },
     AuditService, OrganizationsService, ProjectsService, SessionGuard, TenantGuard, RateLimitGuard, FailureThrottle,
-    SourcesService, QueriesService, MentionsService,
+    SourcesService, QueriesService, MentionsService, AnalysisApiService,
   ],
 })
 export class AppModule {}
