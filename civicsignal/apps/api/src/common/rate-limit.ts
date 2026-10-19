@@ -42,3 +42,40 @@ export class RateLimitGuard implements CanActivate {
     for (const [k, v] of this.hits) if (v.resetAt <= now) this.hits.delete(k);
   }
 }
+
+/**
+ * Counts *failures* per key (e.g. per account) independent of client IP, so rotating or spoofing
+ * X-Forwarded-For does not help an attacker guess one account's password. Applies identically to
+ * unknown accounts, so it does not reveal which emails exist.
+ * LIMITATION: per-instance memory, like RateLimitGuard. Trade-off: an attacker can temporarily lock a
+ * known account (window-bounded); this is accepted in favour of brute-force resistance.
+ */
+@Injectable()
+export class FailureThrottle {
+  static readonly LIMIT = 5;
+  static readonly WINDOW_MS = 15 * 60 * 1000;
+  private readonly failures = new Map<string, { count: number; resetAt: number }>();
+
+  constructor(@Inject(CONFIG) private readonly config: AppConfig) {}
+
+  assertAllowed(key: string): void {
+    if (!this.config.rateLimitEnabled) return;
+    const e = this.failures.get(key);
+    const now = Date.now();
+    if (e && e.resetAt > now && e.count >= FailureThrottle.LIMIT) {
+      throw new AppError(429, 'rate_limited', 'Too many failed attempts for this account, retry later', { retryAfterSeconds: Math.ceil((e.resetAt - now) / 1000) });
+    }
+  }
+
+  recordFailure(key: string): void {
+    const now = Date.now();
+    const e = this.failures.get(key);
+    if (!e || e.resetAt <= now) this.failures.set(key, { count: 1, resetAt: now + FailureThrottle.WINDOW_MS });
+    else e.count += 1;
+    if (this.failures.size > 10_000) for (const [k, v] of this.failures) if (v.resetAt <= now) this.failures.delete(k);
+  }
+
+  reset(key: string): void {
+    this.failures.delete(key);
+  }
+}

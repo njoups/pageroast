@@ -7,6 +7,7 @@ import { api, can, errorMessage, fmtDate, ROLE_LABEL, type Member, type Role } f
 
 type Invitation = { id: string; email: string; role: Role; expires_at: string; created_at: string };
 const ROLES: Role[] = ['owner', 'admin', 'project_manager', 'analyst', 'report_viewer'];
+const PRIVILEGED = new Set<Role>(['owner', 'admin']);
 
 export default function TeamPage() {
   const org = useOrg();
@@ -40,7 +41,7 @@ export default function TeamPage() {
     setBusy(true); setError(null); setNotice(null); setLink(null);
     try {
       const r = await api<{ token: string; email: string }>(`/organizations/${org.id}/invitations`, { method: 'POST', body: { email: f.get('email'), role: f.get('role') } });
-      setLink(`${window.location.origin}/onboarding?token=${encodeURIComponent(r.token)}`);
+      setLink(`${window.location.origin}/onboarding#token=${encodeURIComponent(r.token)}`);
       form.reset(); await load();
     } catch (err) { setError(errorMessage(err)); }
     setBusy(false);
@@ -75,18 +76,18 @@ export default function TeamPage() {
                   <td className="td font-medium">{m.display_name}{m.user_id === me.user.id && <> <Badge tone="blue">You</Badge></>}</td>
                   <td className="td">{m.email}</td>
                   <td className="td">
-                    {manage ? (
+                    {manage && (org.role === 'owner' || !PRIVILEGED.has(m.role)) ? (
                       <select className="input w-auto py-1" aria-label={`Role for ${m.display_name}`} value={m.role} disabled={busy}
                         onChange={(e) => act(() => api(`/organizations/${org.id}/members/${m.user_id}`, { method: 'PATCH', body: { role: e.target.value } }), 'Role updated.')}>
-                        {ROLES.map((r) => <option key={r} value={r}>{ROLE_LABEL[r]}</option>)}
+                        {ROLES.filter((r) => org.role === 'owner' || !PRIVILEGED.has(r)).map((r) => <option key={r} value={r}>{ROLE_LABEL[r]}</option>)}
                       </select>
                     ) : ROLE_LABEL[m.role]}
                   </td>
                   <td className="td text-xs">{fmtDate(m.created_at)}</td>
                   {manage && <td className="td text-right">
-                    <button className="btn-danger px-2 py-1 text-xs" disabled={busy} onClick={() => {
+                    {(org.role === 'owner' || !PRIVILEGED.has(m.role)) && <button className="btn-danger px-2 py-1 text-xs" disabled={busy} onClick={() => {
                       if (window.confirm(`Remove ${m.display_name} from ${org.name}?`)) void act(() => api(`/organizations/${org.id}/members/${m.user_id}`, { method: 'DELETE' }), 'Member removed.');
-                    }}>Remove</button>
+                    }}>Remove</button>}
                   </td>}
                 </tr>
               ))}

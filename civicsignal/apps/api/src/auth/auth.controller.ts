@@ -6,7 +6,7 @@ import { AppConfig, CONFIG } from '../config';
 import { AuditService } from '../audit/audit.service';
 import { Database } from '../database/database.service';
 import { AppError, badRequest } from '../common/errors';
-import { RateLimit, RateLimitGuard } from '../common/rate-limit';
+import { FailureThrottle, RateLimit, RateLimitGuard } from '../common/rate-limit';
 import { Auth, AuthContext, Meta, RequestMeta } from '../common/request';
 import { IDENTITY_PROVIDER, IdentityProvider } from '../identity/identity.provider';
 import { ChangePasswordDto, LoginDto, RegisterDto } from './dto';
@@ -21,6 +21,7 @@ export class AuthController {
     @Inject(CONFIG) private readonly config: AppConfig,
     private readonly db: Database,
     private readonly audit: AuditService,
+    private readonly throttle: FailureThrottle,
   ) {}
 
   private setCookie(res: Response, token: string, expiresAt: Date) {
@@ -47,11 +48,15 @@ export class AuthController {
   @HttpCode(200)
   @RateLimit({ limit: 10, windowSeconds: 300 })
   async login(@Body() dto: LoginDto, @Meta() meta: RequestMeta, @Res({ passthrough: true }) res: Response) {
+    const key = `login:${hashEmail(dto.email)}`;
+    this.throttle.assertAllowed(key);
     const user = await this.identity.verifyCredentials(dto.email, dto.password);
     if (!user) {
+      this.throttle.recordFailure(key);
       await this.auditSystem('auth.login_failed', null, meta, { emailHash: hashEmail(dto.email) });
       throw new AppError(401, 'invalid_credentials', 'Email or password is incorrect');
     }
+    this.throttle.reset(key);
     const s = await this.identity.createSession(user.id, meta);
     await this.auditSystem('auth.login', user.id, meta);
     this.setCookie(res, s.token, s.expiresAt);
@@ -72,8 +77,14 @@ export class AuthController {
   @RateLimit({ limit: 5, windowSeconds: 600 })
   @UseGuards(SessionGuard)
   async changePassword(@Auth() auth: AuthContext, @Body() dto: ChangePasswordDto, @Meta() meta: RequestMeta) {
+    const key = `password:${auth.userId}`;
+    this.throttle.assertAllowed(key);
     const ok = await this.identity.changePassword(auth.userId, dto.currentPassword, dto.newPassword, auth.sessionId);
-    if (!ok) throw badRequest('invalid_current_password', 'Current password is incorrect');
+    if (!ok) {
+      this.throttle.recordFailure(key);
+      throw badRequest('invalid_current_password', 'Current password is incorrect');
+    }
+    this.throttle.reset(key);
     await this.auditSystem('auth.password_changed', auth.userId, meta, { otherSessionsRevoked: true });
   }
 

@@ -1,7 +1,7 @@
 'use client';
 import Link from 'next/link';
-import { useRouter, useSearchParams } from 'next/navigation';
-import { Suspense, useState, type FormEvent } from 'react';
+import { useRouter } from 'next/navigation';
+import { useEffect, useState, type FormEvent } from 'react';
 import { SessionProvider, useSession } from '@/components/session';
 import { Alert } from '@/components/ui';
 import { api, errorMessage } from '@/lib/api';
@@ -9,7 +9,12 @@ import { api, errorMessage } from '@/lib/api';
 function Onboarding() {
   const { me } = useSession();
   const router = useRouter();
-  const tokenFromLink = useSearchParams().get('token') ?? '';
+  // The token arrives in the URL fragment (#token=…), which is never sent to any server or written to access logs.
+  const [tokenFromLink, setTokenFromLink] = useState('');
+  useEffect(() => {
+    const t = new URLSearchParams(window.location.hash.slice(1)).get('token');
+    if (t) { setTokenFromLink(t); window.history.replaceState(null, '', window.location.pathname); }
+  }, []);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
 
@@ -53,7 +58,7 @@ function Onboarding() {
           <h2 className="font-semibold">Join with an invitation</h2>
           <div>
             <label htmlFor="token" className="label">Invitation code</label>
-            <input id="token" name="token" required defaultValue={tokenFromLink} className="input font-mono text-xs" />
+            <input id="token" name="token" required key={tokenFromLink} defaultValue={tokenFromLink} className="input font-mono text-xs" />
           </div>
           <p className="text-xs text-slate-500">The invitation must have been sent to {me.user.email}.</p>
           <button className="btn-secondary" disabled={busy}>Join organization</button>
@@ -67,5 +72,5 @@ function Onboarding() {
 }
 
 export default function OnboardingPage() {
-  return <SessionProvider><Suspense><Onboarding /></Suspense></SessionProvider>;
+  return <SessionProvider><Onboarding /></SessionProvider>;
 }

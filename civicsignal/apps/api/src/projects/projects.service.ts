@@ -63,9 +63,9 @@ export class ProjectsService {
     return this.db.withTenant(t.orgId, auth.userId, async (c) => {
       const p = await this.load(c, auth, t, id, true);
       if (p.status === 'archived') throw conflict('project_archived', 'Unarchive the project before editing it');
-      const start = dto.dateRangeStart !== undefined ? dto.dateRangeStart : p.date_range_start?.toISOString?.().slice(0, 10);
-      const end = dto.dateRangeEnd !== undefined ? dto.dateRangeEnd : p.date_range_end?.toISOString?.().slice(0, 10);
-      checkRange(start, end);
+      const start = dto.dateRangeStart !== undefined ? dto.dateRangeStart : (p.date_range_start as string | null);
+      const end = dto.dateRangeEnd !== undefined ? dto.dateRangeEnd : (p.date_range_end as string | null);
+      checkRange(start?.slice(0, 10), end?.slice(0, 10));
       await c.query(
         `UPDATE projects SET name = coalesce($2, name), objective = coalesce($3, objective), languages = coalesce($4, languages),
            date_range_start = CASE WHEN $5 THEN $6::date ELSE date_range_start END,
@@ -103,7 +103,7 @@ export class ProjectsService {
       await this.load(c, auth, t, id);
       return (await c.query(
         `SELECT pm.user_id, u.display_name, u.email, m.role, pm.created_at FROM project_members pm
-         JOIN users u ON u.id = pm.user_id JOIN memberships m ON m.user_id = pm.user_id
+         JOIN users u ON u.id = pm.user_id JOIN memberships m ON m.user_id = pm.user_id AND m.tenant_id = pm.tenant_id
          WHERE pm.project_id = $1 ORDER BY u.display_name`, [id])).rows;
     });
   }
@@ -111,7 +111,7 @@ export class ProjectsService {
   addMember(auth: AuthContext, t: TenantContext, id: string, userId: string, meta: RequestMeta) {
     return this.db.withTenant(t.orgId, auth.userId, async (c) => {
       await this.load(c, auth, t, id);
-      const m = await c.query('SELECT 1 FROM memberships WHERE user_id = $1', [userId]);
+      const m = await c.query('SELECT 1 FROM memberships WHERE tenant_id = $1 AND user_id = $2', [t.orgId, userId]);
       if (!m.rowCount) throw notFound('Member');
       await c.query(
         `INSERT INTO project_members (tenant_id, project_id, user_id, added_by) VALUES ($1,$2,$3,$4) ON CONFLICT DO NOTHING`,

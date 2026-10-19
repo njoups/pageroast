@@ -98,9 +98,10 @@ describe('auth rate limiting (e2e)', () => {
   afterAll(async () => { await app.close(); process.env.RATE_LIMIT_ENABLED = 'false'; });
 
   it('returns 429 after 10 login attempts in the window', async () => {
-    const body = { email: uniqueEmail('rl'), password: 'whatever-password' };
-    for (let i = 0; i < 10; i++) await request(app.getHttpServer()).post('/api/v1/auth/login').send(body).expect(401);
-    const r = await request(app.getHttpServer()).post('/api/v1/auth/login').send(body).expect(429);
+    // Distinct emails so this exercises the per-IP limit, not the per-account failure limit.
+    const body = () => ({ email: uniqueEmail('rl'), password: 'whatever-password' });
+    for (let i = 0; i < 10; i++) await request(app.getHttpServer()).post('/api/v1/auth/login').send(body()).expect(401);
+    const r = await request(app.getHttpServer()).post('/api/v1/auth/login').send(body()).expect(429);
     expect(r.body.error.code).toBe('rate_limited');
     expect(r.body.error.details.retryAfterSeconds).toBeGreaterThan(0);
   });

@@ -2,7 +2,7 @@
 import Link from 'next/link';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { useState, type FormEvent } from 'react';
-import { api, errorMessage } from '@/lib/api';
+import { api, errorMessage, safeNextPath } from '@/lib/api';
 import { Alert } from './ui';
 
 export function AuthForm({ mode }: { mode: 'login' | 'register' }) {
@@ -20,8 +20,7 @@ export function AuthForm({ mode }: { mode: 'login' | 'register' }) {
         email: f.get('email'), password: f.get('password'),
         ...(mode === 'register' ? { displayName: f.get('displayName') } : {}),
       } });
-      // Only allow same-site relative redirects.
-      router.replace(next && next.startsWith('/') && !next.startsWith('//') ? next : '/');
+      router.replace(safeNextPath(next, window.location.origin));
     } catch (err) {
       setError(errorMessage(err));
       setBusy(false);

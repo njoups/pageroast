@@ -60,4 +60,16 @@ export const can = {
 
 export const fmtDate = (s: string | null) => (s ? new Date(s).toLocaleString('en-GB', { dateStyle: 'medium', timeStyle: 'short' }) : '—');
 
+/**
+ * Post-login redirect target: only same-origin paths. Rejects '//host', '/\\host' (browsers normalise '\\' to '/'),
+ * and anything that resolves to another origin.
+ */
+export function safeNextPath(next: string | null, origin: string): string {
+  if (!next || !next.startsWith('/') || next.includes('\\')) return '/';
+  try {
+    const u = new URL(next, origin);
+    return u.origin === origin ? `${u.pathname}${u.search}${u.hash}` : '/';
+  } catch { return '/'; }
+}
+
 export const parseLanguages = (s: string) => s.split(',').map((x) => x.trim().toLowerCase()).filter(Boolean);

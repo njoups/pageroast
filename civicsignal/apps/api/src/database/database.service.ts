@@ -1,5 +1,6 @@
 import { Inject, Injectable, OnModuleDestroy } from '@nestjs/common';
-import { Pool, PoolClient } from 'pg';
+import { Pool, PoolClient, types } from 'pg';
+import type { CustomTypesConfig } from 'pg';
 import { AppConfig, CONFIG } from '../config';
 
 /**
@@ -13,12 +14,22 @@ export interface DbContext {
   system?: boolean;
 }
 
+const DATE_OID = 1082;
+/**
+ * Calendar dates (DATE columns) are returned as 'YYYY-MM-DD' strings. The pg default converts them to a JS Date at
+ * *server-local* midnight, which shifts the day when serialised from a server east of UTC (e.g. Asia/Jakarta).
+ */
+const pgTypes: CustomTypesConfig = {
+  getTypeParser: ((oid: number, format?: 'text' | 'binary') =>
+    oid === DATE_OID ? (v: string) => v : types.getTypeParser(oid, format as 'text')) as CustomTypesConfig['getTypeParser'],
+};
+
 @Injectable()
 export class Database implements OnModuleDestroy {
   private readonly pool: Pool;
 
   constructor(@Inject(CONFIG) config: AppConfig) {
-    this.pool = new Pool({ connectionString: config.databaseUrl, max: 10 });
+    this.pool = new Pool({ connectionString: config.databaseUrl, max: 10, types: pgTypes, statement_timeout: 15_000 });
   }
 
   async run<T>(ctx: DbContext, fn: (client: PoolClient) => Promise<T>): Promise<T> {

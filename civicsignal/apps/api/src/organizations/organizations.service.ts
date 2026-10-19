@@ -11,6 +11,7 @@ import type { CreateOrgDto, InviteDto, UpdateOrgDto } from './dto';
 
 const INVITE_TTL_DAYS = 7;
 const ALLOWED_SETTINGS = new Set(['brandColor', 'timezone', 'locale']);
+const TIMEZONES = new Set([...Intl.supportedValuesOf('timeZone'), 'UTC']);
 
 export function slugify(name: string): string {
   const base = name.toLowerCase().normalize('NFKD').replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 32);
@@ -46,7 +47,10 @@ export class OrganizationsService {
     if (dto.settings) {
       const bad = Object.keys(dto.settings).filter((k) => !ALLOWED_SETTINGS.has(k));
       if (bad.length) throw badRequest('validation_failed', 'Unsupported settings keys', bad);
-      if (dto.settings.brandColor && !/^#[0-9a-fA-F]{6}$/.test(dto.settings.brandColor)) throw badRequest('validation_failed', 'brandColor must be #RRGGBB');
+      const { brandColor, timezone, locale } = dto.settings;
+      if (brandColor !== undefined && (typeof brandColor !== 'string' || !/^#[0-9a-fA-F]{6}$/.test(brandColor))) throw badRequest('validation_failed', 'brandColor must be #RRGGBB');
+      if (timezone !== undefined && (typeof timezone !== 'string' || !TIMEZONES.has(timezone))) throw badRequest('validation_failed', 'timezone must be an IANA timezone');
+      if (locale !== undefined && (typeof locale !== 'string' || !/^[a-z]{2,3}(-[A-Z]{2})?$/.test(locale))) throw badRequest('validation_failed', 'locale must look like id-ID');
     }
     return this.db.withTenant(t.orgId, auth.userId, async (c) => {
       const r = await c.query(
@@ -61,27 +65,27 @@ export class OrganizationsService {
   listMembers(auth: AuthContext, t: TenantContext) {
     return this.db.withTenant(t.orgId, auth.userId, async (c) => (await c.query(
       `SELECT m.user_id, m.role, m.created_at, u.email, u.display_name
-       FROM memberships m JOIN users u ON u.id = m.user_id ORDER BY u.display_name`)).rows);
+       FROM memberships m JOIN users u ON u.id = m.user_id WHERE m.tenant_id = $1 ORDER BY u.display_name`, [t.orgId])).rows);
   }
 
-  private async lockMember(c: PoolClient, userId: string): Promise<{ role: Role }> {
-    const r = await c.query<{ role: Role }>('SELECT role FROM memberships WHERE user_id = $1 FOR UPDATE', [userId]);
+  private async lockMember(c: PoolClient, tenantId: string, userId: string): Promise<{ role: Role }> {
+    const r = await c.query<{ role: Role }>('SELECT role FROM memberships WHERE tenant_id = $1 AND user_id = $2 FOR UPDATE', [tenantId, userId]);
     if (!r.rows[0]) throw notFound('Member');
     return r.rows[0];
   }
 
-  private async assertNotLastOwner(c: PoolClient): Promise<void> {
-    const owners = await c.query(`SELECT user_id FROM memberships WHERE role = 'owner' FOR UPDATE`);
+  private async assertNotLastOwner(c: PoolClient, tenantId: string): Promise<void> {
+    const owners = await c.query(`SELECT user_id FROM memberships WHERE tenant_id = $1 AND role = 'owner' FOR UPDATE`, [tenantId]);
     if (owners.rowCount! <= 1) throw conflict('last_owner', 'An organization must keep at least one owner');
   }
 
   updateRole(auth: AuthContext, t: TenantContext, userId: string, role: Role, meta: RequestMeta) {
     return this.db.withTenant(t.orgId, auth.userId, async (c) => {
-      const target = await this.lockMember(c, userId);
+      const target = await this.lockMember(c, t.orgId, userId);
       if (target.role === role) return { userId, role };
       if (!canAssignRole(t.role, target.role, role)) throw forbidden('Your role cannot make this change');
-      if (target.role === 'owner') await this.assertNotLastOwner(c);
-      await c.query('UPDATE memberships SET role = $2 WHERE user_id = $1', [userId, role]);
+      if (target.role === 'owner') await this.assertNotLastOwner(c, t.orgId);
+      await c.query('UPDATE memberships SET role = $3 WHERE tenant_id = $1 AND user_id = $2', [t.orgId, userId, role]);
       await this.audit.record(c, { tenantId: t.orgId, actorUserId: auth.userId, action: 'member.role_changed', targetType: 'user', targetId: userId, metadata: { from: target.role, to: role }, meta });
       return { userId, role };
     });
@@ -89,11 +93,11 @@ export class OrganizationsService {
 
   removeMember(auth: AuthContext, t: TenantContext, userId: string, meta: RequestMeta) {
     return this.db.withTenant(t.orgId, auth.userId, async (c) => {
-      const target = await this.lockMember(c, userId);
+      const target = await this.lockMember(c, t.orgId, userId);
       if (!canRemoveMember(t.role, target.role)) throw forbidden('Your role cannot remove this member');
-      if (target.role === 'owner') await this.assertNotLastOwner(c);
-      await c.query('DELETE FROM project_members WHERE user_id = $1', [userId]);
-      await c.query('DELETE FROM memberships WHERE user_id = $1', [userId]);
+      if (target.role === 'owner') await this.assertNotLastOwner(c, t.orgId);
+      await c.query('DELETE FROM project_members WHERE tenant_id = $1 AND user_id = $2', [t.orgId, userId]);
+      await c.query('DELETE FROM memberships WHERE tenant_id = $1 AND user_id = $2', [t.orgId, userId]);
       await this.audit.record(c, { tenantId: t.orgId, actorUserId: auth.userId, action: 'member.removed', targetType: 'user', targetId: userId, metadata: { role: target.role }, meta });
     });
   }
@@ -102,7 +106,7 @@ export class OrganizationsService {
     if (!canAssignRole(t.role, 'report_viewer', dto.role)) throw forbidden('Only owners can invite administrators');
     const token = randomBytes(32).toString('base64url');
     return this.db.withTenant(t.orgId, auth.userId, async (c) => {
-      const existing = await c.query('SELECT 1 FROM memberships m JOIN users u ON u.id = m.user_id WHERE u.email = $1', [dto.email]);
+      const existing = await c.query('SELECT 1 FROM memberships m JOIN users u ON u.id = m.user_id WHERE m.tenant_id = $1 AND u.email = $2', [t.orgId, dto.email]);
       if (existing.rowCount) throw conflict('already_member', 'This person is already a member');
       const r = await c.query(
         `INSERT INTO invitations (tenant_id, email, role, token_hash, invited_by, expires_at)
