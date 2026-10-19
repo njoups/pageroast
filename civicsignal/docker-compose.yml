@@ -29,16 +29,22 @@ services:
       DATABASE_URL: postgres://civicsignal_app:${APP_DB_PASSWORD}@db:5432/civicsignal
       MIGRATION_DATABASE_URL: postgres://civicsignal_owner:${POSTGRES_PASSWORD}@db:5432/civicsignal
       APP_ORIGINS: ${APP_ORIGINS:-http://localhost:3000}
-      COOKIE_SECURE: ${COOKIE_SECURE:-false}
+      # Browsers accept Secure cookies on http://localhost; use HTTPS everywhere else.
+      COOKIE_SECURE: ${COOKIE_SECURE:-true}
       SESSION_TTL_SECONDS: ${SESSION_TTL_SECONDS:-43200}
+      # Only valid because the edge proxy below overwrites X-Forwarded-For. Never expose web or api directly.
       TRUST_PROXY: "true"
     depends_on: { migrate: { condition: service_completed_successfully } }
-    ports: ["127.0.0.1:4000:4000"]
 
   web:
     build: { context: ., dockerfile: apps/web/Dockerfile, args: { API_INTERNAL_URL: http://api:4000 } }
     depends_on: [api]
-    ports: ["127.0.0.1:3000:3000"]
+
+  edge:
+    image: caddy:2
+    volumes: ["./infra/Caddyfile:/etc/caddy/Caddyfile:ro"]
+    depends_on: [web]
+    ports: ["127.0.0.1:3000:8080"]
 
 volumes:
   pgdata:

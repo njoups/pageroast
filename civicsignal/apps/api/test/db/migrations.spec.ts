@@ -50,3 +50,12 @@ describe('migrations', () => {
     for (const t of REQUIRED.filter((t) => !['tenants', 'users'].includes(t))) expect(withTenant.has(t)).toBe(true);
   });
 });
+
+describe('app role session privileges', () => {
+  it('cannot create temporary tables (no shadowing of real tables)', async () => {
+    const { APP_URL } = await import('../env');
+    const c = new Client({ connectionString: APP_URL }); await c.connect();
+    await expect(c.query('CREATE TEMP TABLE users (id int)')).rejects.toThrow(/permission denied/);
+    await c.end();
+  });
+});

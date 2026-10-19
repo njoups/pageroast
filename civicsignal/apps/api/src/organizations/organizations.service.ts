@@ -102,6 +102,17 @@ export class OrganizationsService {
     });
   }
 
+  /** Any member may leave, except the last owner. */
+  leave(auth: AuthContext, t: TenantContext, meta: RequestMeta) {
+    return this.db.withTenant(t.orgId, auth.userId, async (c) => {
+      const me = await this.lockMember(c, t.orgId, auth.userId);
+      if (me.role === 'owner') await this.assertNotLastOwner(c, t.orgId);
+      await c.query('DELETE FROM project_members WHERE tenant_id = $1 AND user_id = $2', [t.orgId, auth.userId]);
+      await c.query('DELETE FROM memberships WHERE tenant_id = $1 AND user_id = $2', [t.orgId, auth.userId]);
+      await this.audit.record(c, { tenantId: t.orgId, actorUserId: auth.userId, action: 'member.left', targetType: 'user', targetId: auth.userId, metadata: { role: me.role }, meta });
+    });
+  }
+
   invite(auth: AuthContext, t: TenantContext, dto: InviteDto, meta: RequestMeta) {
     if (!canAssignRole(t.role, 'report_viewer', dto.role)) throw forbidden('Only owners can invite administrators');
     const token = randomBytes(32).toString('base64url');

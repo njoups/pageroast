@@ -26,6 +26,8 @@ export class ErrorEnvelopeFilter implements ExceptionFilter {
       const pg = exception as { code?: string };
       if (pg?.code === '23505') { status = 409; code = 'conflict'; message = 'A record with these values already exists'; }
       else if (pg?.code === '23503') { status = 409; code = 'conflict'; message = 'Referenced record does not exist or is still in use'; }
+      else if (pg?.code === '22007' || pg?.code === '22008') { status = 400; code = 'validation_failed'; message = 'Invalid date or time value'; }
+      else if (pg?.code === '23514') { status = 400; code = 'validation_failed'; message = 'Value violates a data constraint'; }
       else if (pg?.code === '22P02') { status = 400; code = 'invalid_identifier'; message = 'Malformed identifier'; }
       else this.log.error(`requestId=${req.requestId} ${(exception as Error)?.stack ?? String(exception)}`);
     }

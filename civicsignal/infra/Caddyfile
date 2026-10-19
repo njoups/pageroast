@@ -1,0 +1,6 @@
+# Edge proxy for the local stack. Caddy ignores X-Forwarded-For from untrusted clients and sets it to the real peer
+# address, so the API (TRUST_PROXY=1, one hop behind Next.js) sees a client IP that cannot be spoofed.
+# Next.js rewrites pass X-Forwarded-For through unchanged, so this edge is REQUIRED whenever TRUST_PROXY is on.
+:8080 {
+	reverse_proxy web:3000
+}

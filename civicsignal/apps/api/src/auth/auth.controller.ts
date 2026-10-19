@@ -49,10 +49,9 @@ export class AuthController {
   @RateLimit({ limit: 10, windowSeconds: 300 })
   async login(@Body() dto: LoginDto, @Meta() meta: RequestMeta, @Res({ passthrough: true }) res: Response) {
     const key = `login:${hashEmail(dto.email)}`;
-    this.throttle.assertAllowed(key);
+    this.throttle.begin(key);
     const user = await this.identity.verifyCredentials(dto.email, dto.password);
     if (!user) {
-      this.throttle.recordFailure(key);
       await this.auditSystem('auth.login_failed', null, meta, { emailHash: hashEmail(dto.email) });
       throw new AppError(401, 'invalid_credentials', 'Email or password is incorrect');
     }
@@ -78,10 +77,9 @@ export class AuthController {
   @UseGuards(SessionGuard)
   async changePassword(@Auth() auth: AuthContext, @Body() dto: ChangePasswordDto, @Meta() meta: RequestMeta) {
     const key = `password:${auth.userId}`;
-    this.throttle.assertAllowed(key);
+    this.throttle.begin(key);
     const ok = await this.identity.changePassword(auth.userId, dto.currentPassword, dto.newPassword, auth.sessionId);
     if (!ok) {
-      this.throttle.recordFailure(key);
       throw badRequest('invalid_current_password', 'Current password is incorrect');
     }
     this.throttle.reset(key);

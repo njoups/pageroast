@@ -35,7 +35,7 @@ export class ProjectsController {
   @Delete(':id') @HttpCode(204) @RequirePermission('projects:delete')
   remove(@Auth() a: AuthContext, @Tenant() t: TenantContext, @Param('id', ParseUUIDPipe) id: string, @Meta() m: RequestMeta) { return this.projects.remove(a, t, id, m); }
 
-  @Get(':id/members') @RequirePermission('projects:read')
+  @Get(':id/members') @RequirePermission('members:read')
   members(@Auth() a: AuthContext, @Tenant() t: TenantContext, @Param('id', ParseUUIDPipe) id: string) { return this.projects.listMembers(a, t, id); }
 
   @Post(':id/members') @HttpCode(204) @RequirePermission('projects:manage_members')

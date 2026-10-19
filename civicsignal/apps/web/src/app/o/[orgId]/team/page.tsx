@@ -1,4 +1,5 @@
 'use client';
+import { useRouter } from 'next/navigation';
 import { useCallback, useEffect, useState, type FormEvent } from 'react';
 import { useOrg } from '@/components/org-context';
 import { useSession } from '@/components/session';
@@ -12,6 +13,13 @@ const PRIVILEGED = new Set<Role>(['owner', 'admin']);
 export default function TeamPage() {
   const org = useOrg();
   const { me } = useSession();
+  const router = useRouter();
+  async function leave() {
+    if (!window.confirm(`Leave ${org.name}? You will lose access immediately.`)) return;
+    try { await api(`/organizations/${org.id}/leave`, { method: 'POST' }); router.replace('/'); }
+    catch (e) { setError(errorMessage(e)); }
+  }
+  const leaveButton = <button className="btn-danger" onClick={leave}>Leave organization</button>;
   const manage = can.manageMembers(org.role);
   const [members, setMembers] = useState<Member[] | null>(null);
   const [invites, setInvites] = useState<Invitation[]>([]);
@@ -47,11 +55,13 @@ export default function TeamPage() {
     setBusy(false);
   }
 
-  if (!can.readMembers(org.role)) return <><PageHeader title="Team" /><Alert tone="info">Your role does not include viewing the member list.</Alert></>;
+  if (!can.readMembers(org.role)) {
+    return <><PageHeader title="Team" actions={leaveButton} />{error && <Alert>{error}</Alert>}<Alert tone="info">Your role does not include viewing the member list.</Alert></>;
+  }
 
   return (
     <>
-      <PageHeader title="Team" description="Members of this organization and their roles. Role changes and removals take effect immediately and are recorded in the audit log." />
+      <PageHeader title="Team" description="Members of this organization and their roles. Role changes and removals take effect immediately and are recorded in the audit log." actions={leaveButton} />
       <div className="mb-4 space-y-3">
         {error && <Alert>{error}</Alert>}
         {notice && <Alert tone="success">{notice}</Alert>}

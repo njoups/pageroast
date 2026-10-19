@@ -35,6 +35,9 @@ export class OrganizationsController {
     return this.orgs.removeMember(a, t, userId, m);
   }
 
+  @Post(':orgId/leave') @HttpCode(204) @UseGuards(TenantGuard) @RequirePermission('org:read')
+  leave(@Auth() a: AuthContext, @Tenant() t: TenantContext, @Meta() m: RequestMeta) { return this.orgs.leave(a, t, m); }
+
   @Post(':orgId/invitations') @UseGuards(TenantGuard) @RequirePermission('members:invite')
   invite(@Auth() a: AuthContext, @Tenant() t: TenantContext, @Body() dto: InviteDto, @Meta() m: RequestMeta) { return this.orgs.invite(a, t, dto, m); }
 

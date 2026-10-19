@@ -94,6 +94,39 @@ describe('audit regressions (e2e)', () => {
     });
   });
 
+  describe('review findings', () => {
+    it('rejects non-calendar date formats with 400 instead of 500', async () => {
+      const u = await registerUser(app, 'Dates Two');
+      const org = await createOrg(app, u);
+      const base = `/api/v1/organizations/${org}/projects`;
+      for (const body of [{ name: 'W', dateRangeStart: '2026-W02-1' }, { name: 'O', dateRangeStart: '2026-02-01', dateRangeEnd: '2026-020' },
+        { name: 'F', dateRangeStart: '2026-02-30' }, { name: 'T', dateRangeStart: '2026-01-10T00:00:00Z' }]) {
+        const r = await http().post(base).set('Cookie', u.cookie).send(body);
+        expect([body.name, r.status, r.body.error.code]).toEqual([body.name, 400, 'validation_failed']);
+      }
+    });
+
+    it('report viewers cannot read project member emails', async () => {
+      const owner = await registerUser(app, 'PV Owner');
+      const org = await createOrg(app, owner);
+      const viewer = await addMember(app, owner, org, 'report_viewer', 'Viewer');
+      const p = (await http().post(`/api/v1/organizations/${org}/projects`).set('Cookie', owner.cookie).send({ name: 'Visible' }).expect(201)).body;
+      await http().post(`/api/v1/organizations/${org}/projects/${p.id}/members`).set('Cookie', owner.cookie).send({ userId: viewer.id }).expect(204);
+      await http().get(`/api/v1/organizations/${org}/projects/${p.id}`).set('Cookie', viewer.cookie).expect(200);
+      await http().get(`/api/v1/organizations/${org}/projects/${p.id}/members`).set('Cookie', viewer.cookie).expect(403);
+    });
+
+    it('any member can leave; the last owner cannot', async () => {
+      const owner = await registerUser(app, 'Leave Owner');
+      const org = await createOrg(app, owner);
+      const admin = await addMember(app, owner, org, 'admin', 'Leaving Admin');
+      await http().post(`/api/v1/organizations/${org}/leave`).set('Cookie', admin.cookie).expect(204);
+      await http().get(`/api/v1/organizations/${org}`).set('Cookie', admin.cookie).expect(404);
+      const r = await http().post(`/api/v1/organizations/${org}/leave`).set('Cookie', owner.cookie).expect(409);
+      expect(r.body.error.code).toBe('last_owner');
+    });
+  });
+
   describe('organization settings', () => {
     it('rejects unknown timezones and oversized values', async () => {
       const u = await registerUser(app, 'Settings');
@@ -123,7 +156,22 @@ describe('login throttling per account (e2e)', () => {
 
 });
 
-describe('login throttling: successes (e2e)', () => {
+describe('login throttling: parallel burst (e2e)', () => {
+  let app: INestApplication;
+  beforeAll(async () => { app = await testApp({ RATE_LIMIT_ENABLED: 'true' }); });
+  afterAll(async () => { await app.close(); process.env.RATE_LIMIT_ENABLED = 'false'; });
+
+  // The per-IP limiter admits 10 of these, so at most 5 checks proves the per-account reservation works.
+  it('a parallel burst cannot exceed the per-account limit', async () => {
+    const u = await registerUser(app, 'Burst');
+    const results = await Promise.all(Array.from({ length: 30 }, (_v, i) =>
+      request(app.getHttpServer()).post('/api/v1/auth/login').set('X-Forwarded-For', `10.1.0.${i}`).send({ email: u.email, password: 'wrong ' + i })));
+    const checked = results.filter((r) => r.status === 401).length;
+    expect(checked).toBeLessThanOrEqual(5);
+  });
+});
+
+describe('login throttling: successes only (e2e)', () => {
   let app: INestApplication;
   beforeAll(async () => { app = await testApp({ RATE_LIMIT_ENABLED: 'true' }); });
   afterAll(async () => { await app.close(); process.env.RATE_LIMIT_ENABLED = 'false'; });

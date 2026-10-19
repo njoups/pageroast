@@ -9,7 +9,7 @@ test('allows same-origin paths, keeping query and hash', () => {
 });
 
 test('rejects protocol-relative, backslash and absolute redirects', () => {
-  for (const bad of ['//evil.example', '/\\evil.example', '/\\/evil.example', 'https://evil.example', 'javascript:alert(1)', '', null]) {
+  for (const bad of ['//evil.example', '/\\evil.example', '/\\/evil.example', 'https://evil.example', 'javascript:alert(1)', '/.//evil.example', '/%2e//evil.example', '/a/..//evil.example', '', null]) {
     assert.equal(safeNextPath(bad, O), '/', String(bad));
   }
 });

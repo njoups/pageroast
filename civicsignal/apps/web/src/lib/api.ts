@@ -68,7 +68,9 @@ export function safeNextPath(next: string | null, origin: string): string {
   if (!next || !next.startsWith('/') || next.includes('\\')) return '/';
   try {
     const u = new URL(next, origin);
-    return u.origin === origin ? `${u.pathname}${u.search}${u.hash}` : '/';
+    const path = `${u.pathname}${u.search}${u.hash}`;
+    // '/.//evil.com' normalises to pathname '//evil.com', which the router would treat as protocol-relative.
+    return u.origin === origin && !path.startsWith('//') ? path : '/';
   } catch { return '/'; }
 }
 

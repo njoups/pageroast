@@ -23,7 +23,8 @@ export default function ProjectDetail() {
 
   const load = useCallback(async () => {
     try {
-      const [p, m] = await Promise.all([api<Project>(base), api<ProjectMember[]>(`${base}/members`)]);
+      const canSeeMembers = can.readMembers(org.role);
+      const [p, m] = await Promise.all([api<Project>(base), canSeeMembers ? api<ProjectMember[]>(`${base}/members`) : Promise.resolve([])]);
       setProject(p); setMembers(m);
       if (manage && can.readMembers(org.role)) setOrgMembers(await api<Member[]>(`/organizations/${org.id}/members`));
     } catch (e) { setError(errorMessage(e)); }
@@ -85,7 +86,7 @@ export default function ProjectDetail() {
             <p className="mt-1">Query configuration and source selection ship with news ingestion in Milestone 2. <Badge tone="amber">Not yet available</Badge></p>
           </div>
         </form>
-        <section className="card" aria-labelledby="pm-h">
+        {can.readMembers(org.role) && <section className="card" aria-labelledby="pm-h">
           <h2 id="pm-h" className="font-semibold">Assigned members</h2>
           <p className="mt-1 text-xs text-slate-500">Owners and administrators can always access every project.</p>
           <ul className="mt-4 space-y-2">
@@ -109,7 +110,7 @@ export default function ProjectDetail() {
               <button className="btn-secondary" disabled={busy}>Assign</button>
             </form>
           )}
-        </section>
+        </section>}
       </div>
     </>
   );
