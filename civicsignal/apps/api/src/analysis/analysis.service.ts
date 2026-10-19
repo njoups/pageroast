@@ -125,7 +125,7 @@ export class AnalysisService {
       await this.persist(c, tenantId, analysisId, m, analysis, used, result, custom, text, contentStatus);
       await this.clusters.detach(c, tenantId, m.id);
       const cl = await this.clusters.assign(c, tenantId, m.id);
-      stages.cluster = cl.action; stages.analytics = 'ok:computed_on_read'; stages.alerts = 'not_implemented:milestone_4';
+      stages.cluster = cl.action; stages.analytics = 'ok:aggregated_by_alert_evaluation'; stages.alerts = 'evaluation_queued_by_worker';
       const usage = used.method === 'baseline' ? null : await recordAiUsage(c, tenantId, used.name, result.model, 'article-analysis', result.usage, { analysisId });
       await this.finish(tenantId, analysisId, m.id, status, {
         stages: { ...stages, sanitize: summarizeReport(report), ...(fallbackReason ? { fallbackReason: fallbackReason.slice(0, 200) } : {}) },

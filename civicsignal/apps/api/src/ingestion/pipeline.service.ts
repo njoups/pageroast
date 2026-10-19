@@ -260,7 +260,7 @@ export class IngestionPipeline {
       stages.persist = 'ok';
       stages.queue_analysis = this.analysis?.available ? `queued_after_commit:${newOriginals.length}` : 'queue_unavailable';
       stages.search_index = 'ok:generated_column';             // mentions.search_tsv is maintained by PostgreSQL
-      stages.alerts = 'not_implemented:milestone_4';
+      stages.alerts = 'after_analysis';   // issues are evaluated by the alerts worker once records are analysed
 
       const health = computeHealth({ enabled: src.enabled, lastAttemptAt: new Date(), lastSuccessAt: new Date(), consecutiveFailures: 0, lastErrorKind: null, refreshIntervalSeconds: src.refresh_interval_seconds });
       const verifiedNow = src.verification_status !== 'verified' && counts.seen > 0;

@@ -5,7 +5,7 @@ export const NAV: NavItem[] = [
   { slug: '', label: 'Overview', available: true, summary: 'Workspace status' },
   { slug: 'monitoring', label: 'Monitoring', available: true, summary: 'Keyword, Boolean and entity monitoring queries per project, matched against collected coverage.' },
   { slug: 'mentions', label: 'Mentions', available: true, summary: 'Search and filter collected coverage with source attribution, publication and discovery timestamps.' },
-  { slug: 'alerts', label: 'Issues & alerts', available: false, milestone: 'Milestone 4', summary: 'Configurable, explainable alert rules, spike detection, acknowledgement and escalation.' },
+  { slug: 'alerts', label: 'Issues & alerts', available: true, summary: 'Explainable issue detection, alert rules, acknowledgement, investigation and escalation.' },
   { slug: 'analytics', label: 'Analytics', available: true, summary: 'Tone, topics, entities and stories from automated analysis, each with its method and definition.' },
   { slug: 'stories', label: 'Stories', available: true, summary: 'Coverage of the same event grouped across publishers, with summaries that cite their records.' },
   { slug: 'reports', label: 'Reports', available: false, milestone: 'Milestone 5', summary: 'Source-backed PDF and CSV reports, scheduling and report history.' },

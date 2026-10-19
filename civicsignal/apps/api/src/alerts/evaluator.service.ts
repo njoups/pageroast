@@ -72,7 +72,8 @@ export class EvaluatorService {
     const coveredBaseline = windows.baseline.filter((w) => w.covered).length;
     return candidates.map((candidate) => {
       if (capped) candidate.result.limitations.push(`Population capped at 50,000 records; counts are lower bounds.`);
-      if (coveredBaseline < windows.baseline.length) {
+      const usesBaseline = ['volume_spike', 'negative_shift', 'emerging_topic'].includes(rule.rule_type);
+      if (usesBaseline && coveredBaseline < windows.baseline.length) {
         candidate.result.limitations.push(`${windows.baseline.length - coveredBaseline} of ${windows.baseline.length} comparison windows had no successful collection and were excluded (historical gaps).`);
       }
       if (stale) candidate.result.limitations.push('Collection is stale: no successful run recently; current counts may be incomplete.');

@@ -1,6 +1,7 @@
 'use client';
 import { useCallback, useEffect, useState, type FormEvent } from 'react';
 import { AiUsagePanel } from '@/components/ai-usage';
+import { AlertsAdmin } from '@/components/alerts-admin';
 import { useOrg } from '@/components/org-context';
 import { useSession } from '@/components/session';
 import { Alert, Empty, Loading, PageHeader } from '@/components/ui';
@@ -98,6 +99,7 @@ export default function AdminPage() {
           </div>
         </section>
         <AiUsagePanel orgId={org.id} />
+        <AlertsAdmin orgId={org.id} />
       </div>
     </>
   );

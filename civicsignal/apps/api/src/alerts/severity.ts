@@ -48,7 +48,7 @@ export function computeSeverity(c: Candidate, ctx: SeverityContext): SeverityRes
     neg === null ? 'fewer than 20 confident classifications: not scored' : '≥40% +1, ≥60% +2');
   add('topic_relevance', ctx.topicRelevant ? 'yes' : 'no', ctx.topicRelevant ? 1 : 0, 'subject is a project category or monitored entity +1');
   const weak = ev.length ? ev.filter((r) => r.headlineOnly || r.uncertain || !r.analysed).length / ev.length : 1;
-  add('evidence_quality', Math.round(weak * 100) / 100, weak > 0.5 ? -1 : 0, '>50% headline-only, unanalysed or uncertain −1');
+  add('evidence_quality', `${Math.round(weak * 100)}% headline-only/unanalysed/uncertain`, weak > 0.5 ? -1 : 0, '>50% headline-only, unanalysed or uncertain −1');
   const newest = ev.length ? Math.max(...ev.map((r) => r.t)) : 0;
   const stale = ctx.collectionStale || (newest > 0 && ctx.now - newest > 24 * 3_600_000);
   add('data_freshness', ctx.collectionStale ? 'collection stale' : newest ? `${Math.round((ctx.now - newest) / 3_600_000)} h since newest record` : 'no records',

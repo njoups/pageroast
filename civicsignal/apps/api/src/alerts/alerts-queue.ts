@@ -14,6 +14,7 @@ import { NotificationService } from './notifications.service';
 export const ALERTS_QUEUE_NAME = 'alerts';
 export const ALERTS_DLQ_NAME = 'alerts-dlq';
 export const ALERTS_QUEUE = Symbol('ALERTS_QUEUE');
+export const ALERTS_DLQ = Symbol('ALERTS_DLQ');
 export type AlertJob =
   | { type: 'evaluate'; tenantId: string; trigger: string; bucket: string }
   | { type: 'deliver'; tenantId: string; deliveryId: string }
@@ -44,8 +45,16 @@ export class AlertsEnqueuer {
 
 @Injectable()
 class AlertsQueueLifecycle implements OnModuleDestroy {
-  constructor(@Inject(ALERTS_QUEUE) private readonly queue: Queue | null) {}
-  async onModuleDestroy() { await this.queue?.close(); }
+  constructor(@Inject(ALERTS_QUEUE) private readonly queue: Queue | null, @Inject(ALERTS_DLQ) private readonly dlq: Queue | null) {}
+  async onModuleDestroy() { await this.queue?.close(); await this.dlq?.close(); }
+}
+
+/** Queue health without tenant content: counts and the age of the oldest waiting job (lag). */
+export async function queueHealth(q: Queue | null) {
+  if (!q) return null;
+  const counts = await q.getJobCounts('waiting', 'active', 'delayed', 'failed', 'prioritized');
+  const oldest = (await q.getJobs(['waiting', 'prioritized'], 0, 0, true))[0];
+  return { counts, lagSeconds: oldest ? Math.max(0, Math.round((Date.now() - oldest.timestamp) / 1000)) : 0 };
 }
 
 @Module({
@@ -59,9 +68,10 @@ class AlertsQueueLifecycle implements OnModuleDestroy {
         defaultJobOptions: { attempts: c.alerts.attempts, backoff: { type: 'jittered' }, removeOnComplete: { age: 86_400, count: 20_000 }, removeOnFail: { age: 7 * 86_400 } },
       }) : null),
     },
+    { provide: ALERTS_DLQ, inject: [CONFIG], useFactory: (c: AppConfig) => (c.redisUrl ? new Queue(ALERTS_DLQ_NAME, { connection: redisConnection(c.redisUrl), prefix: KEY_PREFIX }) : null) },
     AlertsEnqueuer, EvaluatorService, NotificationService, IssueSummaryService, AlertsQueueLifecycle,
   ],
-  exports: [CLOCK, ALERTS_QUEUE, AlertsEnqueuer, EvaluatorService, NotificationService, IssueSummaryService],
+  exports: [CLOCK, ALERTS_QUEUE, ALERTS_DLQ, AlertsEnqueuer, EvaluatorService, NotificationService, IssueSummaryService],
 })
 export class AlertsCoreModule {}
 

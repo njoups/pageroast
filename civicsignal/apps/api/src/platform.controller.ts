@@ -3,6 +3,7 @@ import { Type } from 'class-transformer';
 import { IsNumber, IsOptional, IsString, Matches, MaxLength, Min, MinLength } from 'class-validator';
 import type { Queue } from 'bullmq';
 import { ApiTags } from '@nestjs/swagger';
+import { ALERTS_DLQ, ALERTS_QUEUE, queueHealth } from './alerts/alerts-queue';
 import { AuditService } from './audit/audit.service';
 import { SessionGuard } from './auth/session.guard';
 import { Database } from './database/database.service';
@@ -40,7 +41,16 @@ export class PlatformController {
   constructor(private readonly db: Database, private readonly audit: AuditService,
     @Inject(INGESTION_QUEUE) private readonly queue: Queue | null, @Inject(REDIS) private readonly redis: Redis | null,
     @Inject(INGESTION_DLQ) private readonly dlq: Queue | null,
-    @Inject(ANALYSIS_QUEUE) private readonly analysisQueue: Queue | null, @Inject(ANALYSIS_PROVIDER) private readonly provider: AnalysisProvider) {}
+    @Inject(ANALYSIS_QUEUE) private readonly analysisQueue: Queue | null, @Inject(ANALYSIS_PROVIDER) private readonly provider: AnalysisProvider,
+    @Inject(ALERTS_QUEUE) private readonly alertsQueue: Queue | null, @Inject(ALERTS_DLQ) private readonly alertsDlq: Queue | null) {}
+
+  /** Alert evaluation/notification queue health: depth, lag and dead letters (no tenant content). */
+  @Get('alerts')
+  async alerts() {
+    if (!this.alertsQueue) return { configured: false };
+    return { configured: true, queue: await queueHealth(this.alertsQueue), deadLetter: this.alertsDlq ? await this.alertsDlq.getJobCounts('waiting') : null,
+      ingestion: await queueHealth(this.queue), analysis: await queueHealth(this.analysisQueue) };
+  }
 
   /** AI provider configuration (never the key) and analysis queue depth. */
   @Get('ai/status')

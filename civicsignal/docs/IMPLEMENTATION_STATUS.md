@@ -61,6 +61,23 @@ Last verified: 2026-10-19, from code, test runs and live collection (not from pl
 | **Live:** 153 real records re-analysed by the baseline worker: 150 analysed, 2 skipped (undetermined language), 10 stories | dev database |
 | Evaluation: development + held-out sets, per-class precision/recall/F1 | `npm run eval:ai`, docs/AI_EVALUATION.md |
 
+### Milestone 4: issue detection and alerting (verified 2026-10-19 on live data; email via a local SMTP server only)
+| Area | Evidence |
+|---|---|
+| Migration 0008 (replaces the unused placeholder alert tables, guarded against data loss): rules + immutable versions, issues, events, evidence, assignments, notes, notification deliveries/preferences, webhooks + deliveries, hourly/daily aggregates, evaluation ledger; 50/50 tables with forced RLS; history append-only | migrations spec, alerts e2e (privilege check) |
+| Detection on persisted records: volume spike (median/MAD robust z, ratio, minimum counts, covered-window baselines), negative-share shift (confident classifications only, uncertainty and sample suppression), emerging topic, critical keyword, story velocity, single-publisher concentration; article/story/issue scope; syndication never counted as independent | `unit/alerts/detection.spec.ts`, alerts e2e, live run |
+| Historical gaps: comparison windows without successful collection are excluded and reported | unit + e2e (fixture gap day) + live (0/14 covered → suppressed) |
+| Transparent points-based severity with stored breakdown, caps and rule floors; analyst review steps | unit + e2e |
+| Dedup per rule+subject, idempotent evaluation ledger, per-tenant lock, automatic reopen on new evidence, cooldown (incl. across close), related-issue grouping, escalation once per level | alerts e2e (controllable clock) |
+| Rule versioning; issues keep their creating version; soft-deleted rules keep their issues | alerts e2e |
+| Lifecycle Detected → Pending review → Acknowledged → Investigating → Resolved → Closed, reopen; reasons, notes, assignment validation, audit (note text not copied) | alerts e2e, browser smoke |
+| In-app inbox + bell, preferences; email (HTML+text, header-safe) end to end through SMTP; quiet hours; daily quota; channel rate limits; retries with jitter; DLQ; manual retry; recovery sweep | alerts e2e (local SMTP server), unit, live run (dev mail sink) |
+| Webhooks: HTTPS + SSRF policy, verification handshake, HMAC signatures with timestamp, rotation grace period, no redirects, retries → DLQ, auto-disable, delivery log | unit (local receiver) + alerts e2e |
+| WhatsApp: official Cloud API template adapter; reported as unconfigured without credentials | unit (mocked HTTP), live channel status |
+| API: rules CRUD + dry-run test/preview, issues list/filter/detail/actions/notes, dashboard, notifications, preferences, delivery log, webhooks, platform queue health; permission-checked, tenant-isolated, rate-limited, audited | alerts e2e |
+| Dashboard: high-priority issues, counts, volume chart with baseline and gaps, tone chart, emerging topics, timeline, related stories, collection freshness, filters (project, entity, topic, severity, source, date range, status, assignee); issue detail; rule editor with dry run; notifications; admin delivery log/webhooks | browser smoke on live data, no console errors |
+| **Live:** 58 new real records collected (ANTARA, CNN Indonesia), analysed, evaluated by 6 rules: 1 high-severity keyword issue (29 records, 2 publishers) with in-app and email notification; volume/emerging rules suppressed (no baseline yet), tone rule suppressed (baseline tone 100% uncertain), story/concentration detections below the rules' severity minimum | dev database, mail sink |
+
 ## Partially implemented
 - **GDELT connector:** implemented and contract-tested. **Not verified live**: every attempt from this environment returned
   429/503 (shared egress IP). Health shows it honestly as failing.
@@ -70,7 +87,13 @@ Last verified: 2026-10-19, from code, test runs and live collection (not from pl
   has not been verified live**, and all stored analysis comes from the rule-based baseline. The baseline's sentiment is weak on held-out
   data (40.9 % accuracy; see AI_EVALUATION.md) and is shown as uncertain.
 - **Entity-level sentiment:** produced only by the AI model path; the baseline gives article-level tone only.
-- **Pipeline stage "evaluate alerts":** recorded as `not_implemented:milestone_4`. Analytics are computed on read (no materialised aggregates).
+- **Email:** verified only against a local SMTP server; no third-party email provider has been configured or tested.
+- **WhatsApp:** adapter only (mocked HTTP); no Business account, number or approved template available.
+- **Detection on young data:** baselines need `minBaselineWindows` covered windows (default 5 days for daily-aligned rules), so volume,
+  emerging-topic and tone rules stay suppressed on a fresh deployment. Tone rules stay suppressed while tone comes from the baseline method.
+- **Regional anomaly detection:** not implemented (no reliable geographic metadata; see ALERT_RULES.md).
+- **Source reliability** is not scored (no reliability metadata yet); recorded as such in every severity breakdown.
+- **Analytics page** (Milestone 3) still computes on read; the alert dashboard uses the new aggregates.
 - **Summaries on headline-only sources:** live sources permit headlines only, so mention summaries are mostly "insufficient evidence"
   and cluster/project summaries are extractive (quotes and counts).
 - **Retention:** expiry is computed per record, but nothing deletes expired records yet (Milestone 6).
@@ -81,7 +104,7 @@ Last verified: 2026-10-19, from code, test runs and live collection (not from pl
 - **Conditional GET:** a 304 has been verified only against the local test server. Live feeds changed every minute or sent no ETag.
 
 ## Missing
-Alerts, reports, entity/summary/clustering quality evaluation, analyst annotations (UI area reserved; no storage yet), billing/metering enforcement, retention jobs,
+Reports, entity/summary/clustering quality evaluation, analyst annotations (UI area reserved; no storage yet), billing/metering enforcement, retention jobs,
 export/deletion workflows, break-glass support access, social connectors, licensed-provider connector.
 
 ## Broken
@@ -116,6 +139,16 @@ None known. All automated tests pass (see bottom).
 | Low | Entity extraction preferred a short gazetteer match over a longer institution name | Longest-span selection |
 | Low (CI) | Queue tests depended on test-file order: the scheduler picked up sources enabled by another test file, so CI was red since the Milestone 2 push while local runs passed | Queue test deactivates foreign schedules and counts only its own dead letters; reproduced and verified with a forced file order |
 
+## Defects found during Milestone 4 (all fixed)
+| Severity | Defect | Fix |
+|---|---|---|
+| Medium (CI) | Queue tests were order-dependent (CI red since the Milestone 2 push) | Test isolation; reproduced with forced order |
+| Medium | Dashboard query passed an unused parameter (500) | Separate parameter lists per query |
+| Low | Keyword issues listed a baseline-gap limitation although keyword rules use no baseline | Limitation only for baseline signals |
+| Low | Notification rationale omitted severity adjustments (rule floor) | Adjustments included |
+| Low | Disabled sources flagged as stale on the freshness panel | Only enabled sources can be stale |
+| Medium (config) | Docker Compose did not pass AI settings to the worker (since Milestone 3), so a Compose deployment would have analysed with the baseline even with a key | Worker receives AI and notification settings |
+
 ## Security risks (open)
 1. **RLS context is set by the application.** An attacker with arbitrary SQL execution as the app role can set
    `app.tenant_id`/`app.system` and read any tenant. RLS guards against logic bugs, not SQL injection.
@@ -127,6 +160,9 @@ None known. All automated tests pass (see bottom).
    sent to the provider. No account data or analyst input is sent. Prompt injection is contained by the evidence check (output can only
    cite text that exists in the source) and by AI output having no access to tools, the database or authorization decisions. Untested
    against a live model.
+5. **System-context scans for scheduling:** `alert_rules`, `notification_deliveries` and `webhook_deliveries` have a read-only policy for
+   the system context so the scheduler can find due work. Combined with risk 1, an attacker with SQL execution could read them.
+6. **Webhook payloads leave the platform** (issue title, counts, source links) to tenant-verified HTTPS endpoints; tenants control those endpoints.
 
 ## Data-source and licensing risks
 - **No source has been legally reviewed.** The two live RSS sources are registered "for limited integration test only", with a basis
@@ -138,7 +174,19 @@ None known. All automated tests pass (see bottom).
 - Retention periods are recorded but not yet enforced by deletion.
 
 ## Required external credentials
-Managed IdP · email provider · Redis (required for collection and analysis) · `ANTHROPIC_API_KEY` (for AI-model analysis; baseline otherwise) · `CREDENTIALS_KEY` (when a credentialed connector is added) · a licensed news provider or publisher API contract (for a commercial second connector) · written source authorizations.
+Managed IdP · email provider (SMTP: `SMTP_URL`, `EMAIL_FROM`) · WhatsApp Business Cloud API (optional) · Redis (required for collection and analysis) · `ANTHROPIC_API_KEY` (for AI-model analysis; baseline otherwise) · `CREDENTIALS_KEY` (webhook signing secrets; credentialed connectors) · a licensed news provider or publisher API contract (for a commercial second connector) · written source authorizations.
+
+## Test results (2026-10-19, after Milestone 4)
+| Command | Result |
+|---|---|
+| `npm run lint`, `npm run typecheck` (API + web) | ✔ |
+| API jest (Postgres 16 + Redis 7) | **366 passed, 0 failed, 0 skipped**; three consecutive runs green |
+| web `node:test` | 9 passed |
+| `npm run build` (API + web) | ✔ |
+| `npm audit --omit=dev` | 0 vulnerabilities |
+| Migration 0008 on the dev DB | applied; placeholder tables were empty; 153 + 58 real records preserved; 50/50 tables with forced RLS |
+| Live run | 58 records collected and analysed; 6 rules evaluated; 1 issue; in-app + email (local sink) delivered |
+| Browser smoke (live data) | dashboard (incl. chart tooltip), issue detail (acknowledge + note via UI), rules (dry run, form), notifications, admin: no console errors |
 
 ## Test results (2026-10-19, after Milestone 3)
 | Command | Result |
@@ -169,8 +217,7 @@ Found and fixed during the run: a test helper bug, a Jest parallelism issue (tes
 now in the config), and a real calibration issue from live data (60-day `max-age` on a live feed, now capped).
 
 ## Next milestone
-**Milestone 4, alerts and analytics:** explainable alert rules (volume spikes, negative-tone shifts, new stories, entity mentions)
-evaluated in the pipeline's reserved "alerts" stage, plus acknowledgement/escalation, notification channels and materialised daily
-aggregates with documented calculation methods. Before relying on tone-based alerts, configure and evaluate an AI model
-(`npm run eval:ai -- --llm`), because the baseline's tone is too weak to drive alerts. Still recommended: legal review of
-publisher terms and a licensed full-text source.
+**Milestone 5, reporting:** source-backed PDF/CSV reports (issue briefs from the persisted evidence, periodic coverage reports from the
+aggregates), scheduling and history, reusing the issue evidence and severity breakdowns. Before relying on tone-based alerts in
+production, configure and evaluate an AI model (`npm run eval:ai -- --llm`). Configure a real email provider and run one delivery
+through it. Still recommended: legal review of publisher terms and a licensed full-text source.

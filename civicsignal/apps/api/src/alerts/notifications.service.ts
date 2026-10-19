@@ -100,7 +100,7 @@ export class NotificationService {
     return {
       kind, title: safeHeader(issue.title, 300), severity: issue.severity, status: issue.status, signal: issue.signal, scope: issue.scope,
       heading: KIND_TEXT[kind],
-      rationale: `Thresholds exceeded: ${exceeded.join(', ') || 'none recorded'}. Severity factors: ${top.join(', ') || 'none'}.`,
+      rationale: `Thresholds exceeded: ${exceeded.join(', ') || 'none recorded'}. Severity factors: ${top.join(', ') || 'none'}.${(issue.severity_breakdown.caps ?? []).length ? ` Adjustments: ${issue.severity_breakdown.caps!.join('; ')}.` : ''}`,
       method: issue.detection.method ?? null, link: `${this.config.appBaseUrl}/o/${issue.tenant_id}/alerts/${issue.id}`,
       sources: sources.slice(0, 5), ...extra,
     };

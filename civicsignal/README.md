@@ -2,12 +2,14 @@
 
 Multi-tenant media monitoring and public-issue intelligence platform (Indonesia-first).
 **Status:** Milestones 1 (foundation), 2 (news ingestion: RSS/Atom verified live, GDELT implemented but not verified live) and
-3 (AI intelligence: analysis pipeline, stories, summaries, analytics) are done. Without `ANTHROPIC_API_KEY`, analysis uses a
+3 (AI intelligence: analysis pipeline, stories, summaries, analytics) and 4 (issue detection and alerting: explainable rules, severity,
+lifecycle, in-app/email/webhook notifications) are done. Without `ANTHROPIC_API_KEY`, analysis uses a
 rule-based baseline, labelled as such, whose tone estimates are weak; the AI-model adapter has not yet been verified against the
-live API. Alerts and reports are not built yet; their navigation entries are labelled as unavailable.
+live API. Email has been verified against a local SMTP server only; WhatsApp is an unconfigured adapter. Reports are not built yet.
 Current, evidence-based status: [docs/IMPLEMENTATION_STATUS.md](docs/IMPLEMENTATION_STATUS.md). Connectors: [docs/CONNECTORS.md](docs/CONNECTORS.md).
 
 - Plan and milestone status: [docs/IMPLEMENTATION_PLAN.md](docs/IMPLEMENTATION_PLAN.md)
+- Alerts: [docs/ALERT_RULES.md](docs/ALERT_RULES.md) · [docs/NOTIFICATIONS.md](docs/NOTIFICATIONS.md) · Operations: [docs/RUNBOOK.md](docs/RUNBOOK.md)
 - AI: [docs/AI_PROVIDERS.md](docs/AI_PROVIDERS.md) (configuration) · [docs/AI_EVALUATION.md](docs/AI_EVALUATION.md) (measured quality and limits)
 - Architecture: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) · Security: [docs/SECURITY.md](docs/SECURITY.md) · Data governance: [docs/DATA_GOVERNANCE.md](docs/DATA_GOVERNANCE.md)
 
@@ -33,7 +35,7 @@ cd apps/api
 DATABASE_URL=postgres://civicsignal_app:<choose-one>@localhost:5432/civicsignal \
 MIGRATION_DATABASE_URL=$MIGRATION_DATABASE_URL npm run dev
 
-# Terminal 2 — worker: ingestion (consumer + scheduler) and AI analysis. Add ANTHROPIC_API_KEY=... to use an AI model.
+# Terminal 2 — worker: ingestion, AI analysis, issue detection and notifications (add SMTP_URL/EMAIL_FROM for email). Add ANTHROPIC_API_KEY=... to use an AI model.
 cd apps/api
 DATABASE_URL=postgres://civicsignal_app:<choose-one>@localhost:5432/civicsignal REDIS_URL=redis://localhost:6379/0 npm run worker
 
@@ -66,9 +68,10 @@ The suite drops and recreates the `civicsignal_test` database and flushes Redis 
 |---|---|---|
 | PostgreSQL 16 | everything | required |
 | Managed IdP (Supabase Auth / OIDC) | MFA, password recovery, production auth | **not configured**: local adapter in use |
-| Email provider | invitations, alerts | **not configured**: invitations use manual links |
+| Email (SMTP) | alert emails (invitations still use manual links) | `SMTP_URL` + `EMAIL_FROM`; verified against a local SMTP server only |
+| WhatsApp Business Cloud API | optional alert channel | **not configured**; shown as unconfigured |
 | Redis | ingestion and analysis queues, worker gates | required for collection and analysis |
-| `CREDENTIALS_KEY` | encrypting connector credentials | optional until a credentialed connector exists |
+| `CREDENTIALS_KEY` | encrypting connector credentials and webhook signing secrets | required for webhooks |
 | Source licences | every source you enable | **required**: only a recorded basis allows collection |
 | Licensed news provider / publisher API | a second commercial connector | not contracted; not built |
 | `ANTHROPIC_API_KEY` | AI-model analysis (docs/AI_PROVIDERS.md) | **not configured**: rule-based baseline in use, labelled in the UI |

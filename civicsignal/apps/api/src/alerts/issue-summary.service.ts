@@ -24,6 +24,7 @@ export class IssueSummaryService {
        FROM alert_evidence e JOIN mentions m ON m.id = e.mention_id WHERE e.issue_id = $1
        ORDER BY e.is_syndicated, coalesce(m.published_at, m.discovered_at) DESC LIMIT 15`, [issueId])).rows);
     if (records.length === 0) return { method: 'none' };
+    const total = await this.db.withTenant(tenantId, SYS, async (c) => (await c.query<{ n: number }>('SELECT count(*)::int AS n FROM alert_evidence WHERE issue_id = $1', [issueId])).rows[0]!.n);
     const now = this.clock.now();
     let summary: Record<string, unknown> | null = null;
     if (this.provider.method !== 'baseline') {
@@ -45,7 +46,7 @@ export class IssueSummaryService {
       const independent = new Set(records.filter((r) => !r.is_syndicated).map((r) => r.publisher)).size;
       summary = { method: 'extractive', provider: null, model: null, status: 'ready', headline: null, generatedAt: now.toISOString(),
         claims: [
-          { kind: 'data', text: `${records.length} supporting record(s) shown from ${independent} independent publisher(s).`, supportingMentionIds: records.map((r) => r.id) },
+          { kind: 'data', text: `${total} supporting record(s); the ${records.length} most recent come from ${independent} independent publisher(s).`, supportingMentionIds: records.map((r) => r.id) },
           ...records.filter((r) => !r.is_syndicated).slice(0, 5).map((r) => ({ kind: 'source_fact', text: `${r.publisher}: “${r.title}”`, supportingMentionIds: [r.id] })),
         ],
         conflicts: [], uncertainty: ['Extractive summary: headlines as published, not verified.'] };

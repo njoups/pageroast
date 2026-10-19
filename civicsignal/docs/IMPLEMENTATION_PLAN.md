@@ -76,10 +76,10 @@ summary/story clustering with evidence references, prompt-injection containment,
 taxonomy version tracking, reprocessing, analytics UI. No API key was available, so the Anthropic adapter is tested against mocked HTTP
 only. Measured quality: docs/AI_EVALUATION.md (baseline tone is weak on held-out data).
 
-## Milestone 4 — Analytics and alerts ⬜ (next; basic analytics views shipped in M3)
+## Milestone 4 — Issue detection and alerts ✅ verified on live data · 🟡 email via local SMTP only, WhatsApp unconfigured (2026-10-19)
 Aggregates with documented formulas, share-of-voice disclosure, alert rules, spike detection, notifications, ack/escalation, incident timeline.
 
-## Milestone 5 — Reporting ⬜
+## Milestone 5 — Reporting ⬜ (next)
 PDF/CSV, scheduled generation, templates, citations, report history, mandatory report metadata.
 
 ## Milestone 6 — Commercial readiness ⬜

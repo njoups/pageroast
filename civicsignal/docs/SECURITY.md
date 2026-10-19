@@ -32,6 +32,13 @@
 | AI cost abuse (M3) | Reprocess/backfill need `analysis:reprocess`, are audited and rate-limited per tenant; per-tenant daily/monthly quotas checked when work starts; provider requests-per-minute gate |
 | AI key exposure (M3) | Key read from server env only; ambient SDK env ignored; never logged, stored or returned by the API |
 | SSRF via connector URLs (M2) | allow-list of registered sources, block private IP ranges |
+| SSRF via webhooks (M4) | HTTPS only, connector IP policy at connect time, no redirects, verification handshake before any payload, timeouts and size limits |
+| Webhook spoofing/replay (M4) | HMAC-SHA256 over timestamp + body; receivers reject stale timestamps; per-delivery id for de-duplication; secret rotation with grace period; secrets encrypted at rest, shown once |
+| Email header injection (M4) | single plain recipient address, CR/LF stripped from subjects, coverage text HTML-escaped |
+| Malformed or abusive rule expressions (M4) | strict schema (unknown keys rejected, bounded numbers and look-back), keyword expressions via the bounded query parser, never SQL or code |
+| Notification floods (M4) | dedup per rule+subject, cooldown, escalation once per level, per-channel rate limits, daily quota per organization (excess recorded as suppressed) |
+| Access to investigation notes (M4) | notes readable only with `alerts:read` and project visibility; not copied into audit logs or webhook payloads; append-only |
+| Cross-tenant alert data (M4) | forced RLS on every alerting table; recipients/assignees validated against membership and project access at write and send time |
 | Audit tampering | append-only, hash-chain planned (M6) |
 
 ## Data-flow (M1)

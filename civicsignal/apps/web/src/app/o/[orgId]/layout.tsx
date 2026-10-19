@@ -1,13 +1,30 @@
 'use client';
 import Link from 'next/link';
 import { useParams, usePathname, useRouter } from 'next/navigation';
-import type { ReactNode } from 'react';
+import { useEffect, useState, type ReactNode } from 'react';
 import { NAV } from '@/components/nav';
 import { OrgContext } from '@/components/org-context';
 import { SessionProvider, useSession } from '@/components/session';
 import { Alert } from '@/components/ui';
 import { api, ROLE_LABEL } from '@/lib/api';
 
+
+/** Unread in-app notification count, refreshed every minute. */
+function NotificationBell({ orgId }: { orgId: string }) {
+  const [n, setN] = useState<number | null>(null);
+  const pathname = usePathname();
+  useEffect(() => {
+    let alive = true;
+    const load = () => api<{ unread: number }>(`/organizations/${orgId}/notifications?unread=true&limit=1`).then((r) => alive && setN(r.unread)).catch(() => undefined);
+    void load(); const t = setInterval(load, 60_000);
+    return () => { alive = false; clearInterval(t); };
+  }, [orgId, pathname]);
+  return (
+    <Link href={`/o/${orgId}/notifications`} className="relative rounded px-2 py-1 text-slate-700 hover:bg-slate-100" aria-label={`Notifications${n ? `, ${n} unread` : ''}`}>
+      <span aria-hidden>🔔</span>{n ? <span className="absolute -right-1 -top-1 rounded-full bg-[#d03b3b] px-1.5 text-[10px] font-semibold text-white">{n > 99 ? '99+' : n}</span> : null}
+    </Link>
+  );
+}
 
 function Shell({ children }: { children: ReactNode }) {
   const { me } = useSession();
@@ -60,6 +77,7 @@ function Shell({ children }: { children: ReactNode }) {
               </select>
             </label>
             <div className="flex items-center gap-3 text-sm">
+              <NotificationBell orgId={org.id} />
               <span className="hidden text-slate-600 sm:inline">{me.user.displayName}</span>
               <button className="btn-secondary py-1.5" onClick={logout}>Sign out</button>
             </div>

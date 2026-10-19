@@ -119,7 +119,7 @@ describe('ingestion pipeline (e2e)', () => {
       expect(s.lastSuccessAt).toBeTruthy();
       const runs = (await http().get(`/api/v1/organizations/${org}/sources/${sourceId}/runs`).set('Cookie', owner.cookie).expect(200)).body;
       expect(runs[0]).toMatchObject({ status: 'succeeded', records_seen: 2, records_new: 2, records_rejected: 1, matches: 1, http_status: 200, not_modified: false });
-      expect(runs[0].stages).toMatchObject({ fetch: 'ok', persist: 'ok', queue_analysis: 'queue_unavailable', alerts: 'not_implemented:milestone_4' });
+      expect(runs[0].stages).toMatchObject({ fetch: 'ok', persist: 'ok', queue_analysis: 'queue_unavailable', alerts: 'after_analysis' });
     });
 
     it('is idempotent per job key', async () => {

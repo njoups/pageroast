@@ -245,6 +245,9 @@ export class IssuesService {
           sum(a.analysed)::int AS analysed, sum(a.positive)::int AS positive, sum(a.negative)::int AS negative, sum(a.neutral)::int AS neutral, sum(a.mixed)::int AS mixed,
           sum(a.uncertain)::int AS uncertain, max(a.refreshed_at) AS refreshed_at
         FROM activity_hourly a WHERE ${vis} ${proj} AND a.hour >= $${fi} AND a.hour <= $${ti} GROUP BY 1 ORDER BY 1`, [...pa, from, to])).rows;
+      // Days on which collection actually succeeded: days without runs are gaps, not zero coverage.
+      const coverage = (await c.query(`SELECT to_char(date_trunc('day', finished_at), 'YYYY-MM-DD') AS day, count(*)::int AS runs FROM connector_runs
+        WHERE status = 'succeeded' AND finished_at >= $1 AND finished_at <= $2 GROUP BY 1 ORDER BY 1`, [from, to])).rows;
       const ei = pa.length + 1;
       const emerging = (await c.query(`WITH recent AS (SELECT a.topic_key, sum(a.mentions)::int AS n, max(a.publishers)::int AS pubs FROM topic_activity_daily a
           WHERE ${vis} ${proj} AND a.day > ($${ei}::timestamptz - interval '3 days')::date GROUP BY 1),
@@ -266,7 +269,7 @@ export class IssuesService {
       const freshness = (await c.query(`SELECT s.id, s.name, s.enabled, s.refresh_interval_seconds, s.last_success_at, s.last_attempt_at, s.consecutive_failures FROM sources s
         ORDER BY s.enabled DESC, s.last_success_at DESC NULLS LAST LIMIT 20`)).rows;
       const lastEvaluation = (await c.query(`SELECT finished_at, status, rules_evaluated, suppressed FROM alert_evaluations ORDER BY started_at DESC LIMIT 1`)).rows[0] ?? null;
-      return { generatedAt: now, counts, series, emerging, active, timeline, clusters, freshness, lastEvaluation,
+      return { generatedAt: now, range: { from, to }, counts, series, coverage, emerging, active, timeline, clusters, freshness, lastEvaluation,
         notes: ['Charts read pre-computed hourly aggregates (refreshed by each evaluation); the last refresh time is shown.',
           'Days without collection appear as gaps, not as zero coverage.', 'Tone counts exclude uncertain classifications, which are shown separately.'] };
     });

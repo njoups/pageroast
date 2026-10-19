@@ -505,6 +505,15 @@ describe('issue detection and alerting (e2e)', () => {
       const ids = new Set(d.evidence.map((e: { id: string }) => e.id));
       for (const c of d.issue.ai_summary.claims) for (const id of c.supportingMentionIds) expect(ids.has(id)).toBe(true);
     });
+    it('platform view reports alert queue depth, lag and dead letters without tenant content (platform admins only)', async () => {
+      const admin = await registerUser(app, 'Platform Ops');
+      await db.query('UPDATE users SET is_platform_admin = true WHERE id = $1', [admin.id]);
+      const r = (await http().get('/api/v1/platform/alerts').set('Cookie', admin.cookie).expect(200)).body;
+      expect(r).toMatchObject({ configured: true, queue: { counts: expect.any(Object), lagSeconds: expect.any(Number) } });
+      expect(r.deadLetter.waiting).toBeGreaterThanOrEqual(1);
+      expect(JSON.stringify(r)).not.toMatch(/reservoir|aquifer|water/i);
+      await http().get('/api/v1/platform/alerts').set('Cookie', owner.cookie).expect(403);
+    });
     it('notification preferences are per user and validated', async () => {
       await api(analyst).put('/notifications/preferences', { items: [{ channel: 'whatsapp', enabled: true, minSeverity: 'high' }] }).expect(400);
       await api(analyst).put('/notifications/preferences', { items: [{ channel: 'whatsapp', enabled: true, minSeverity: 'high', destination: '0812' }] }).expect(400);

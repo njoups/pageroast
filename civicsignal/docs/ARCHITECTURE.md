@@ -18,6 +18,33 @@ Browser ─HTTPS─> Caddy edge ─> Next.js (apps/web) ─same-origin proxy─>
                                                                     PostgreSQL (RLS)
 ```
 
+### Issue detection and alerting (Milestone 4)
+```
+analysis done ─▶ alerts queue "evaluate" (per tenant, 5-min bucket) ◀─ scheduler (every 60 s; tenants with active rules)
+                     │ per-tenant lock + evaluation ledger
+                     ▼
+   refresh activity_hourly / topic_activity_daily ─▶ per rule: population + coverage ─▶ detect() ─▶ severity ─▶ issue upsert
+                                                                                                      │ outbox rows
+                     ┌──────────────────────────────────────────────────────────────────────────────────┘
+                     ▼
+   notification_deliveries (in_app delivered immediately; email/WhatsApp queued) · webhook_deliveries ─▶ "deliver"/"webhook" jobs
+                     ─▶ SMTP / WhatsApp Cloud API / SafeHttpClient POST (signed)  ── final failure ─▶ alerts-dlq
+```
+| Component | File | Notes |
+|---|---|---|
+| Rule configuration | `alerts/rule-config.ts` | Zod schema, type-specific checks, keyword expressions via the bounded query parser |
+| Detection maths | `alerts/detection.ts` | Pure functions over arrays; windows, coverage gaps, robust z, proportions, per-signal candidates |
+| Severity | `alerts/severity.ts` | Documented points table, caps, floors |
+| Population and aggregates | `alerts/population.ts` | Filtered records, collection coverage, idempotent aggregate refresh |
+| Evaluator | `alerts/evaluator.service.ts` | Ledger, dedup/reopen/cooldown, escalation, events |
+| Notifications | `alerts/notifications.service.ts`, `alerts/channels/*` | Outbox planning, quiet hours, quotas, rate gates, email/WhatsApp/webhook senders |
+| Issue summary | `alerts/issue-summary.service.ts` | LLM with record refs, else extractive |
+| Queue, worker, scheduler | `alerts/alerts-queue.ts` | Job ids = idempotency keys; jittered backoff; DLQ; recovery sweep; queue health |
+| API | `alerts/issues-api.ts`, `alerts/rules-api.ts` | Issues, dashboard, rules, notifications, webhooks |
+| Clock | `alerts/clock.ts` | Injected time source (tests use a fixed clock) |
+
+Docs: ALERT_RULES.md (methods, severity, lifecycle), NOTIFICATIONS.md (channels), RUNBOOK.md (operations).
+
 ### AI intelligence (Milestone 3)
 | Component | File | Notes |
 |---|---|---|
@@ -99,5 +126,5 @@ audited break-glass grants (M6).
 `{ "error": { "code": "validation_failed", "message": "...", "details": [...], "requestId": "..." } }`
 
 ## Data model
-See `db/migrations` (0001–0007). 0007 adds `mention_analyses`, `entities`/`entity_aliases`, `project_topics`, `cluster_members`/`cluster_events`,
+See `db/migrations` (0001–0008). 0008 adds the alerting tables (see ALERT_RULES.md) and replaces the unused placeholder alert tables. 0007 adds `mention_analyses`, `entities`/`entity_aliases`, `project_topics`, `cluster_members`/`cluster_events`,
 `ai_summaries`, `ai_usage_records`, `ai_pricing`, `ai_prompt_versions`, `ai_tenant_settings`. Tables for alerts, reports and billing exist but are not yet used.
