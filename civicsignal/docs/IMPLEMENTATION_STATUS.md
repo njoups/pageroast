@@ -114,6 +114,7 @@ None known. All automated tests pass (see bottom).
 | Low | Story "independent" count counted one outlet's follow-ups as independent | Distinct publishers among non-syndicated records |
 | Low | Extractive summaries were labelled "AI-generated" in the UI | Separate "Automated extract" label |
 | Low | Entity extraction preferred a short gazetteer match over a longer institution name | Longest-span selection |
+| Low (CI) | Queue tests depended on test-file order: the scheduler picked up sources enabled by another test file, so CI was red since the Milestone 2 push while local runs passed | Queue test deactivates foreign schedules and counts only its own dead letters; reproduced and verified with a forced file order |
 
 ## Security risks (open)
 1. **RLS context is set by the application.** An attacker with arbitrary SQL execution as the app role can set

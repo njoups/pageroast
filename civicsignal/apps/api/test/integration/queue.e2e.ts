@@ -48,6 +48,9 @@ describe('ingestion queue and worker (e2e, Redis)', () => {
     workerParts = createWorker({ config, db: app.get(Database), pipeline: app.get(IngestionPipeline) });
     worker = workerParts.worker;
     owner_db = new Client({ connectionString: OWNER_URL }); await owner_db.connect();
+    // Test files share one database: sources enabled by other files (whose feed servers are gone) must not be picked up by
+    // the scheduler ticks below, or their failures would land in this file's dead-letter queue.
+    await owner_db.query('UPDATE ingestion_schedule SET active = false');
     owner = await registerUser(app, 'Queue Owner');
     org = await createOrg(app, owner);
   });
@@ -105,7 +108,8 @@ describe('ingestion queue and worker (e2e, Redis)', () => {
     // Exact delays are unit-tested in dedup-health-secrets.spec.ts; this checks the real queue honours them.
     expect(gaps[0]!).toBeGreaterThanOrEqual(130);
     expect(gaps[1]!).toBeGreaterThan(gaps[0]!);
-    expect(await dlqHandle.getJobCounts('waiting')).toMatchObject({ waiting: 1 });
+    const deadLetters = (await dlqHandle.getJobs(['waiting'])).filter((j) => j.data.job.sourceId === bad);
+    expect(deadLetters).toHaveLength(1);
     const src = (await http().get(`/api/v1/organizations/${org}/sources/${bad}`).set('Cookie', owner.cookie)).body;
     expect(src).toMatchObject({ health: 'failing', consecutiveFailures: 3 });
 
