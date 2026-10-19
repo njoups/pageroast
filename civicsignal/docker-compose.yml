@@ -1,0 +1,44 @@
+# Local development stack. Redis/BullMQ and the Python worker join in Milestones 2–3.
+services:
+  db:
+    image: postgres:16
+    environment:
+      POSTGRES_USER: civicsignal_owner
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set in .env}
+      POSTGRES_DB: civicsignal
+    ports: ["127.0.0.1:5432:5432"]
+    volumes: [pgdata:/var/lib/postgresql/data]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U civicsignal_owner -d civicsignal"]
+      interval: 5s
+      retries: 20
+
+  migrate:
+    build: { context: ., dockerfile: apps/api/Dockerfile, target: build }
+    command: ["npm", "run", "migrate", "-w", "apps/api"]
+    environment:
+      MIGRATION_DATABASE_URL: postgres://civicsignal_owner:${POSTGRES_PASSWORD}@db:5432/civicsignal
+      APP_DB_PASSWORD: ${APP_DB_PASSWORD:?set in .env}
+    depends_on: { db: { condition: service_healthy } }
+
+  api:
+    build: { context: ., dockerfile: apps/api/Dockerfile }
+    environment:
+      NODE_ENV: production
+      PORT: 4000
+      DATABASE_URL: postgres://civicsignal_app:${APP_DB_PASSWORD}@db:5432/civicsignal
+      MIGRATION_DATABASE_URL: postgres://civicsignal_owner:${POSTGRES_PASSWORD}@db:5432/civicsignal
+      APP_ORIGINS: ${APP_ORIGINS:-http://localhost:3000}
+      COOKIE_SECURE: ${COOKIE_SECURE:-false}
+      SESSION_TTL_SECONDS: ${SESSION_TTL_SECONDS:-43200}
+      TRUST_PROXY: "true"
+    depends_on: { migrate: { condition: service_completed_successfully } }
+    ports: ["127.0.0.1:4000:4000"]
+
+  web:
+    build: { context: ., dockerfile: apps/web/Dockerfile, args: { API_INTERNAL_URL: http://api:4000 } }
+    depends_on: [api]
+    ports: ["127.0.0.1:3000:3000"]
+
+volumes:
+  pgdata:
