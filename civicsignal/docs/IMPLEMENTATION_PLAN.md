@@ -20,7 +20,7 @@ modified. It can be extracted to its own repository with `git subtree split`.
 | Identity | `IdentityProvider` port + `LocalIdentityProvider` | **Dev/pilot adapter.** Supabase/OIDC adapter not built (see M1 limitations) |
 | Web | Next.js App Router, Tailwind, strict TS | |
 | Queue | Redis + BullMQ | introduced in M2 |
-| AI worker | Python | introduced in M3 |
+| AI worker | TypeScript, same worker process as ingestion (BullMQ `analysis` queue) | M3; Python was planned but not needed: the provider SDK and all rules run in Node |
 
 ## Milestone 1 — Foundation ✅ (verified 2026-10-19)
 
@@ -70,11 +70,13 @@ Results: see docs/IMPLEMENTATION_STATUS.md and docs/CONNECTORS.md. Criterion 3 i
 feeds). The GDELT connector passes its contract tests, but every live attempt from the development environment was throttled or answered 503,
 so it is **not** counted as verified.
 
-## Milestone 3 — AI intelligence ⬜ (next)
-Provider-independent LLM adapter, structured-output validation, sentiment/topic/entity/summary/cluster with evidence
-references, prompt-injection defences, token accounting, model + prompt version tracking.
+## Milestone 3 — AI intelligence ✅ pipeline, baseline, UI verified · 🟡 AI model not verified live (2026-10-19)
+Provider-independent adapter (Anthropic, rule-based baseline, test fixture), structured-output validation, sentiment/topic/entity/
+summary/story clustering with evidence references, prompt-injection containment, token and cost accounting, model, prompt and
+taxonomy version tracking, reprocessing, analytics UI. No API key was available, so the Anthropic adapter is tested against mocked HTTP
+only. Measured quality: docs/AI_EVALUATION.md (baseline tone is weak on held-out data).
 
-## Milestone 4 — Analytics and alerts ⬜
+## Milestone 4 — Analytics and alerts ⬜ (next; basic analytics views shipped in M3)
 Aggregates with documented formulas, share-of-voice disclosure, alert rules, spike detection, notifications, ack/escalation, incident timeline.
 
 ## Milestone 5 — Reporting ⬜

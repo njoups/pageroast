@@ -19,7 +19,7 @@ describe('language detection', () => {
     expect(detectLanguage('2026-10-19 08:00 #12345').language).toBe('und');
   });
   it('falls back to the publisher-declared language only when detection is inconclusive', () => {
-    expect(resolveLanguage('Siswa SMA meraih medali emas', 'id')).toMatchObject({ language: 'id', method: 'publisher-declared', supported: true });
+    expect(resolveLanguage('Persija 2-1 Persib', 'id')).toMatchObject({ language: 'id', method: 'publisher-declared', supported: true });
     expect(resolveLanguage('Kerajaan akan menaikkan bantuan tunai kerana kos sara hidup meningkat', 'id').language).toBe('ms');
     expect(resolveLanguage('OK', 'fr').language).toBe('und');
   });

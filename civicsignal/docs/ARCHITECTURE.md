@@ -12,7 +12,28 @@ Browser ─HTTPS─> Caddy edge ─> Next.js (apps/web) ─same-origin proxy─>
                                                                           │ dead letters
                                                                           ▼
                                                                     ingestion-dlq
+   pipeline commit ──enqueue──> Redis / BullMQ "analysis" ──> worker ──> AnalysisProvider (Anthropic | baseline | test)
+                                                                          │ sanitise (evidence check) → persist → cluster → usage
+                                                                          ▼
+                                                                    PostgreSQL (RLS)
 ```
+
+### AI intelligence (Milestone 3)
+| Component | File | Notes |
+|---|---|---|
+| Ledger, run, persist | `analysis/analysis.service.ts` | `mention_analyses` row claimed atomically; language → validation → provider → sanitise → persist + cluster in one transaction → usage → finish |
+| Queue + worker | `analysis/analysis-queue.ts` | Job id from ledger id; provider rpm gate in Redis; `UnrecoverableError` for non-retryable kinds; prompt-version registry |
+| Providers | `analysis/providers/*` | `AnalysisProvider` interface; Anthropic (SDK, structured output, typed errors), rule-based baseline, deterministic test provider |
+| Contracts + sanitisation | `analysis/schemas.ts` | Zod schemas; `sanitizeArticleAnalysis` / `sanitizeMultiSummary` enforce verbatim evidence and valid record refs |
+| Prompts | `analysis/prompts.ts` | Versioned system prompts; untrusted content in nonce-tagged blocks |
+| Language, taxonomy, baseline | `analysis/language.ts`, `taxonomy.ts`, `baseline.ts` | Deterministic, auditable rules (method `baseline`) |
+| Clustering | `analysis/clustering.ts`, `cluster.service.ts` | Pure scoring + persistence with membership history and events; per-tenant advisory lock |
+| Summaries | `analysis/summaries.service.ts` | Mention, cluster, project, period; LLM with refs or extractive |
+| Usage and quotas | `analysis/usage.ts` | Append-only usage, pricing lookup with timestamp, quota state |
+| API | `analysis/analysis-api.ts`, `filters.ts` | Analysis detail, reprocess/backfill, analytics, clusters, topics, entities, summaries, usage/settings |
+
+Analytics are computed on read from the *current* analysis of each original record (`mentions.analysis_id`); earlier analyses
+stay for history and reprocessing. Configuration: docs/AI_PROVIDERS.md. Quality: docs/AI_EVALUATION.md.
 
 ### Ingestion (Milestone 2)
 | Component | File | Notes |
@@ -78,4 +99,5 @@ audited break-glass grants (M6).
 `{ "error": { "code": "validation_failed", "message": "...", "details": [...], "requestId": "..." } }`
 
 ## Data model
-See `db/migrations` (0001–0006). Tables for analysis, alerts, reports and billing exist but are not yet used by application code.
+See `db/migrations` (0001–0007). 0007 adds `mention_analyses`, `entities`/`entity_aliases`, `project_topics`, `cluster_members`/`cluster_events`,
+`ai_summaries`, `ai_usage_records`, `ai_pricing`, `ai_prompt_versions`, `ai_tenant_settings`. Tables for alerts, reports and billing exist but are not yet used.

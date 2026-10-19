@@ -19,7 +19,7 @@
 | Account | email, name, password hash | scrypt hashes; never logged |
 | Tenant config | projects, queries, alert rules | RLS-isolated; audit on change |
 | Source content | headlines, excerpts, permitted bodies | licence-driven retention |
-| Derived | sentiment, entities, summaries | stored with model/prompt versions and evidence |
+| Derived | sentiment, entities, topics, summaries, story clusters | stored with method, model/prompt/taxonomy versions, confidence and evidence; history kept |
 | Audit | audit_events | append-only, retained ≥ 12 months (configurable per tenant, not below the floor) |
 
 ## Ingestion controls (implemented in Milestone 2)
@@ -37,6 +37,23 @@
 - **Politeness:** an identifying User-Agent, per-host spacing, per-source rate limits and daily quotas, and `Retry-After` and
   `Cache-Control` honoured (max-age capped at 1 h, see CONNECTORS.md).
 
+## AI analysis controls (implemented in Milestone 3)
+- **Estimates, labelled as such.** Every classification and summary stores its method (`llm`, `baseline`, `test`), provider, model,
+  prompt version, taxonomy version, confidence and evidence. The UI shows the method beside each result and separates source content,
+  automated classifications, generated summaries and processing records. Test-fixture output is refused in production.
+- **Evidence or nothing.** Entities, tone evidence, topic cues and quoted summary claims must occur verbatim in the permitted source text.
+  Otherwise they are discarded. Summaries cite the records behind each claim, mark interpretation separately from reported content, and
+  say "insufficient evidence" instead of speculating. Syndicated copies are not counted as independent corroboration.
+- **No personal profiling.** Prompts forbid inferring sensitive attributes (religion, ethnicity, health, political affiliation of
+  private individuals, etc.). Public figures are extracted only as named in coverage. No per-person scores or risk profiles exist in
+  the schema. Sentiment is about the text's tone toward a target, not a judgement of a person.
+- **Language honesty.** Only Indonesian and English are analysed. Other languages and undetermined text are skipped and labelled, never
+  silently treated as Indonesian.
+- **Only permitted fields leave the system.** With an AI provider configured, the provider receives only the stored, licence-permitted
+  fields (headline, excerpt, body if permitted) and project category names. Account data, analyst input and other tenants' data are
+  never sent. Provider data-handling and cross-border transfer need legal review (open item below).
+- **History.** Re-analysis creates a new analysis; earlier results are kept. Cluster membership changes and usage records are append-only.
+
 ## Retention
 `retention_policies` stores per-tenant, per-data-class retention. Defaults are conservative; enforcement jobs arrive in M6.
 Retention may be shortened by a source licence but never lengthened beyond it.
@@ -47,4 +64,4 @@ The two RSS sources used for live verification in the development database were 
 Their basis text says so, and their publishers' terms have **not** been reviewed (see CONNECTORS.md).
 
 ## Open items for legal review
-UU PDP applicability to public-figure mentions · hosting location · cross-border transfer of LLM prompts · publisher terms for RSS reuse and excerpts.
+UU PDP applicability to public-figure mentions and extracted names · hosting location · cross-border transfer of source text to an AI provider and the provider's retention terms · whether sending licensed excerpts to an AI provider is permitted by each source licence · publisher terms for RSS reuse and excerpts.

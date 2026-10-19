@@ -28,7 +28,9 @@
 | Platform-admin overreach | No implicit tenant permissions; break-glass planned (M6) |
 | Session theft | httpOnly, hashed storage, short TTL, revocation |
 | Credential stuffing | rate limit, scrypt cost |
-| Prompt injection from scraped content (M3) | content treated as data, no tools reachable from summariser, output schema validation |
+| Prompt injection from collected content (M3) | Content wrapped in nonce-tagged untrusted blocks (forged tags neutralised); no tools, DB or authorization reachable from model output; schema validation; every quote/entity/evidence must occur verbatim in the source; summary refs mapped only to records supplied to that call; viewers see only claims whose records they can access |
+| AI cost abuse (M3) | Reprocess/backfill need `analysis:reprocess`, are audited and rate-limited per tenant; per-tenant daily/monthly quotas checked when work starts; provider requests-per-minute gate |
+| AI key exposure (M3) | Key read from server env only; ambient SDK env ignored; never logged, stored or returned by the API |
 | SSRF via connector URLs (M2) | allow-list of registered sources, block private IP ranges |
 | Audit tampering | append-only, hash-chain planned (M6) |
 

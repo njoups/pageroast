@@ -45,6 +45,11 @@ services:
       TRUST_PROXY: "true"
       REDIS_URL: redis://redis:6379/0
       CREDENTIALS_KEY: ${CREDENTIALS_KEY:-}
+      # AI analysis (docs/AI_PROVIDERS.md). Without a key the rule-based baseline is used and labelled as such.
+      AI_PROVIDER: ${AI_PROVIDER:-}
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+      AI_MODEL: ${AI_MODEL:-}
+      AI_FALLBACK: ${AI_FALLBACK:-baseline}
     depends_on: { migrate: { condition: service_completed_successfully }, redis: { condition: service_healthy } }
 
   worker:

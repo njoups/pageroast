@@ -8,6 +8,7 @@ import { Database } from '../../src/database/database.service';
 import { ANALYSIS_QUEUE, AnalysisEnqueuer, createAnalysisWorker, registerPromptVersions, type AnalysisJob } from '../../src/analysis/analysis-queue';
 import { AnalysisService } from '../../src/analysis/analysis.service';
 import { SummariesService } from '../../src/analysis/summaries.service';
+import { ClusterService } from '../../src/analysis/cluster.service';
 import { ANALYSIS_PROVIDER } from '../../src/analysis/providers';
 import { ProviderError } from '../../src/analysis/providers/provider';
 import type { TestProvider } from '../../src/analysis/providers/test.provider';
@@ -48,6 +49,9 @@ describe('AI intelligence pipeline (e2e, test provider)', () => {
 
   const ledger = (mentionId: string) => db.query('SELECT * FROM mention_analyses WHERE mention_id = $1 ORDER BY queued_at DESC', [mentionId]).then((r) => r.rows);
   const latestId = async (mentionId: string) => (await ledger(mentionId))[0]!.id as string;
+  /** A new queued ledger row with a unique key, so tests do not depend on each other's idempotency keys. */
+  const fresh = async (mentionId: string) => (await db.query(`INSERT INTO mention_analyses (tenant_id, mention_id, idempotency_key, trigger, pipeline_version)
+    VALUES ($1, $2, 'test:' || gen_random_uuid(), 'manual', 'ai-pipeline/2') RETURNING id`, [org, mentionId])).rows[0].id as string;
   const runFor = (key: string, attempt = 1, final = true) => latestId(ids[key]!).then((a) => analysis.run(org, a, attempt, final));
 
   beforeAll(async () => {
@@ -192,6 +196,43 @@ describe('AI intelligence pipeline (e2e, test provider)', () => {
     await redis.del(k);
   });
 
+  it('backfill: permission-checked; "stale" covers records analysed or skipped under an older configuration', async () => {
+    await http().post(`/api/v1/organizations/${org}/analysis/backfill`).set('Cookie', analyst.cookie).send({ scope: 'stale' }).expect(403);
+    // Simulate an older processing configuration for the skipped Malay record and one analysed record.
+    await db.query(`UPDATE mention_analyses SET idempotency_key = 'oldconfig:' || id WHERE mention_id = ANY($1::uuid[])`, [[ids.malay, ids.flood1]]);
+    const r = (await http().post(`/api/v1/organizations/${org}/analysis/backfill`).set('Cookie', owner.cookie).send({ scope: 'stale' }).expect(202)).body;
+    expect(r).toMatchObject({ scope: 'stale', considered: 2, queued: 2 });
+    expect((await ledger(ids.malay!))[0]).toMatchObject({ status: 'queued', trigger: 'reprocess', pipeline_version: 'ai-pipeline/2' });
+    await db.query(`DELETE FROM mention_analyses WHERE mention_id = ANY($1::uuid[]) AND status = 'queued'`, [[ids.malay, ids.flood1]]);
+  });
+
+  it('concurrent analyses of related records do not race on story membership', async () => {
+    const queued = [await fresh(ids.flood1!), await fresh(ids.flood2!), await fresh(ids.inject!)];
+    const out = await Promise.all(queued.map((a) => analysis.run(org, a, 1, true)));
+    expect(out.map((o) => o.outcome)).toEqual(['succeeded', 'succeeded', 'succeeded']);
+    const dup = (await db.query(`SELECT mention_id, count(*)::int AS n FROM cluster_members WHERE removed_at IS NULL AND mention_id = ANY($1::uuid[]) GROUP BY 1 HAVING count(*) > 1`,
+      [[ids.flood1, ids.flood2, ids.inject]])).rows;
+    expect(dup).toEqual([]);
+  });
+
+  it('an unexpected error while persisting is recorded (retrying), and the next attempt completes the analysis', async () => {
+    const clusters = app.get(ClusterService);
+    const spy = jest.spyOn(clusters, 'assign').mockRejectedValueOnce(new Error('simulated database failure'));
+    const aid = await fresh(ids.kpk!);
+    await expect(analysis.run(org, aid, 1, false)).rejects.toThrow('simulated database failure');
+    spy.mockRestore();
+    const [row] = (await db.query('SELECT status, error FROM mention_analyses WHERE id = $1', [aid])).rows;
+    expect(row).toMatchObject({ status: 'retrying', error: { kind: 'internal' } });
+    expect((await analysis.run(org, aid, 2, true)).outcome).toBe('succeeded');
+  });
+
+  it('a row left running by a crashed attempt is reclaimed by a later attempt, but not by a duplicate of the same attempt', async () => {
+    const aid = await fresh(ids.flood2!);
+    await db.query(`UPDATE mention_analyses SET status = 'running', attempt = 1, started_at = now(), finished_at = NULL WHERE id = $1`, [aid]);
+    expect(await analysis.run(org, aid, 1, false)).toEqual({ outcome: 'not_claimed' });
+    expect((await analysis.run(org, aid, 2, true)).outcome).toBe('succeeded');
+  });
+
   it('cross-tenant: another organization cannot read analysis, clusters, entities or usage', async () => {
     const cl = (await db.query('SELECT cluster_id FROM mentions WHERE id = $1', [ids.flood1])).rows[0].cluster_id;
     const ent = (await db.query('SELECT entity_id FROM mention_entities WHERE mention_id = $1 LIMIT 1', [ids.flood1])).rows[0].entity_id;
@@ -249,9 +290,7 @@ describe('AI intelligence pipeline (e2e, test provider)', () => {
     await db.query('UPDATE users SET is_platform_admin = true WHERE id = $1', [admin.id]);
     await http().put('/api/v1/platform/ai/pricing/test/test-fixture').set('Cookie', owner.cookie).send({ inputPerMtok: 1, outputPerMtok: 2, source: 'unit test' }).expect(403);
     await http().put('/api/v1/platform/ai/pricing/test/test-fixture').set('Cookie', admin.cookie).send({ inputPerMtok: 1, outputPerMtok: 2, source: 'test fixture price, not a real price' }).expect(200);
-    await db.query(`DELETE FROM mention_analyses WHERE mention_id = $1 AND status = 'queued'`, [ids.flood2]);
-    const r = await enqueuer.enqueueMentions(org, [ids.flood2!], 'backfill');
-    await analysis.run(org, r.queued[0]!, 1, true);
+    await analysis.run(org, await fresh(ids.flood2!), 1, true);
     const [l] = await ledger(ids.flood2!);
     expect(Number(l.cost_estimate)).toBeCloseTo((1000 * 1 + 200 * 2) / 1e6, 8);
     const u1 = (await http().get(`/api/v1/organizations/${org}/ai/usage`).set('Cookie', owner.cookie).expect(200)).body;

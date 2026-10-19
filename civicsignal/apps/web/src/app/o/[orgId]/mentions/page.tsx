@@ -1,22 +1,33 @@
 'use client';
 import { useCallback, useEffect, useState, type FormEvent } from 'react';
 import { useOrg } from '@/components/org-context';
+import Link from 'next/link';
+import { SentimentBadge } from '@/components/ai';
 import { Alert, Badge, Empty, Loading, PageHeader } from '@/components/ui';
+import { SENTIMENT_LABEL, SENTIMENTS, STATUS_LABEL, TOPIC_LABEL, topicLabel, type Sentiment } from '@/lib/ai';
 import { api, canIngest, errorMessage, fmtDate, type Mention, type Project, type Source } from '@/lib/api';
 
-interface Filters { q: string; projectId: string; sourceId: string; language: string; from: string; to: string; dateField: 'published' | 'discovered'; sort: 'published' | 'discovered' | 'relevance'; includeDuplicates: boolean }
-const EMPTY: Filters = { q: '', projectId: '', sourceId: '', language: '', from: '', to: '', dateField: 'discovered', sort: 'published', includeDuplicates: false };
+interface Filters { q: string; projectId: string; sourceId: string; language: string; topic: string; sentiment: string; entityId: string; clusterId: string; from: string; to: string; dateField: 'published' | 'discovered'; sort: 'published' | 'discovered' | 'relevance'; includeDuplicates: boolean }
+const EMPTY: Filters = { q: '', projectId: '', sourceId: '', language: '', topic: '', sentiment: '', entityId: '', clusterId: '', from: '', to: '', dateField: 'discovered', sort: 'published', includeDuplicates: false };
 const PAGE = 25;
+type Row = Mention & { sentiment: { label: Sentiment; confidence: string; uncertain: boolean; method: string } | null; topics: string[]; cluster_id: string | null; detected_language: string | null };
 
 export default function MentionsPage() {
   const org = useOrg();
   const [filters, setFilters] = useState<Filters>(EMPTY);
   const [offset, setOffset] = useState(0);
-  const [data, setData] = useState<{ items: Mention[]; total: number } | null>(null);
+  const [data, setData] = useState<{ items: Row[]; total: number } | null>(null);
   const [projects, setProjects] = useState<Project[]>([]);
   const [sources, setSources] = useState<Source[]>([]);
   const [error, setError] = useState<string | null>(null);
 
+  useEffect(() => {
+    const u = new URLSearchParams(window.location.search);
+    const pick = (k: 'entityId' | 'clusterId' | 'topic' | 'sentiment' | 'projectId') => u.get(k) ?? '';
+    if (['entityId', 'clusterId', 'topic', 'sentiment', 'projectId'].some((k) => u.get(k))) {
+      setFilters((f) => ({ ...f, entityId: pick('entityId'), clusterId: pick('clusterId'), topic: pick('topic'), sentiment: pick('sentiment'), projectId: pick('projectId') }));
+    }
+  }, []);
   useEffect(() => {
     api<Project[]>(`/organizations/${org.id}/projects`).then(setProjects).catch(() => undefined);
     if (canIngest.readSources(org.role)) api<Source[]>(`/organizations/${org.id}/sources`).then(setSources).catch(() => undefined);
@@ -25,7 +36,7 @@ export default function MentionsPage() {
   const load = useCallback(async () => {
     setData(null); setError(null);
     const p = new URLSearchParams({ limit: String(PAGE), offset: String(offset), sort: filters.sort, dateField: filters.dateField });
-    for (const k of ['q', 'projectId', 'sourceId', 'language'] as const) if (filters[k]) p.set(k, filters[k]);
+    for (const k of ['q', 'projectId', 'sourceId', 'language', 'topic', 'sentiment', 'entityId', 'clusterId'] as const) if (filters[k]) p.set(k, filters[k]);
     if (filters.from) p.set('from', new Date(`${filters.from}T00:00:00`).toISOString());
     if (filters.to) p.set('to', new Date(`${filters.to}T23:59:59`).toISOString());
     if (filters.includeDuplicates) p.set('includeDuplicates', 'true');
@@ -40,7 +51,8 @@ export default function MentionsPage() {
     const f = new FormData(e.currentTarget);
     const g = (k: string) => String(f.get(k) ?? '');
     setOffset(0);
-    setFilters({ q: g('q').trim(), projectId: g('projectId'), sourceId: g('sourceId'), language: g('language'), from: g('from'), to: g('to'),
+    setFilters({ q: g('q').trim(), projectId: g('projectId'), sourceId: g('sourceId'), language: g('language'), topic: g('topic'), sentiment: g('sentiment'),
+      entityId: filters.entityId, clusterId: filters.clusterId, from: g('from'), to: g('to'),
       dateField: g('dateField') as Filters['dateField'], sort: g('sort') as Filters['sort'], includeDuplicates: f.get('includeDuplicates') === 'on' });
   }
 
@@ -55,12 +67,22 @@ export default function MentionsPage() {
           <select id="sourceId" name="sourceId" className="input" defaultValue={filters.sourceId}><option value="">All</option>{sources.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}</select></div>
         <div><label className="label" htmlFor="language">Language</label>
           <select id="language" name="language" className="input" defaultValue={filters.language}><option value="">Any</option><option value="id">Indonesian</option><option value="en">English</option><option value="ms">Malay</option><option value="jv">Javanese</option></select></div>
+        <div><label className="label" htmlFor="topic">Topic (automated)</label>
+          <select id="topic" name="topic" className="input" defaultValue={filters.topic} key={`t${filters.topic}`}><option value="">Any</option>{Object.entries(TOPIC_LABEL).filter(([k]) => k !== 'unknown').map(([k, v]) => <option key={k} value={k}>{v}</option>)}</select></div>
+        <div><label className="label" htmlFor="sentiment">Tone (automated)</label>
+          <select id="sentiment" name="sentiment" className="input" defaultValue={filters.sentiment} key={`s${filters.sentiment}`}><option value="">Any</option>{SENTIMENTS.map((x) => <option key={x} value={x}>{SENTIMENT_LABEL[x]}</option>)}</select></div>
         <div><label className="label" htmlFor="dateField">Date applies to</label>
           <select id="dateField" name="dateField" className="input" defaultValue={filters.dateField}><option value="discovered">Discovery time</option><option value="published">Publication time</option></select></div>
         <div><label className="label" htmlFor="from">From</label><input id="from" name="from" type="date" defaultValue={filters.from} className="input" /></div>
         <div><label className="label" htmlFor="to">To</label><input id="to" name="to" type="date" defaultValue={filters.to} className="input" /></div>
         <div><label className="label" htmlFor="sort">Sort</label>
           <select id="sort" name="sort" className="input" defaultValue={filters.sort}><option value="published">Newest published</option><option value="discovered">Newest discovered</option><option value="relevance">Relevance (with search)</option></select></div>
+        {(filters.entityId || filters.clusterId) && (
+          <p className="text-sm text-slate-700 md:col-span-4">
+            Filtered to {filters.entityId ? 'one entity' : 'one story'}.{' '}
+            <button type="button" className="text-brand-700 underline" onClick={() => { setOffset(0); setFilters({ ...filters, entityId: '', clusterId: '' }); }}>Clear</button>
+          </p>
+        )}
         <label className="flex items-center gap-2 self-end pb-2 text-sm"><input type="checkbox" name="includeDuplicates" defaultChecked={filters.includeDuplicates} />Include duplicates</label>
         <div className="flex gap-2 self-end md:col-span-2">
           <button className="btn-primary">Apply</button>
@@ -76,7 +98,7 @@ export default function MentionsPage() {
       )}
       {data && data.total > 0 && (
         <>
-          <p className="mb-3 text-sm text-slate-600">{data.total.toLocaleString()} result{data.total === 1 ? '' : 's'} · <Badge tone="green">Live data</Badge> collected from registered sources</p>
+          <p className="mb-3 text-sm text-slate-600">{data.total.toLocaleString()} result{data.total === 1 ? '' : 's'} · <Badge tone="green">Live data</Badge> collected from registered sources · tone and topic badges are automated estimates</p>
           <ul className="space-y-3">
             {data.items.map((m) => (
               <li key={m.id} className="card p-4">
@@ -84,7 +106,9 @@ export default function MentionsPage() {
                   <a href={m.url} target="_blank" rel="noopener noreferrer nofollow" className="font-medium text-brand-700 hover:underline">{m.title}</a>
                   <span className="flex flex-wrap gap-1">
                     {m.duplicate_status !== 'original' && <Badge tone="amber">{m.duplicate_status === 'duplicate' ? 'Duplicate' : 'Near duplicate'}</Badge>}
-                    {m.language && <Badge>{m.language}</Badge>}
+                    {m.sentiment && <SentimentBadge label={m.sentiment.label} uncertain={m.sentiment.uncertain} />}
+                    {m.topics.slice(0, 2).map((t) => <Badge key={t} tone="blue">{topicLabel(t)}</Badge>)}
+                    {(m.detected_language ?? m.language) && <Badge>{m.detected_language ?? m.language}</Badge>}
                   </span>
                 </div>
                 <p className="mt-1 text-xs text-slate-600">
@@ -97,8 +121,10 @@ export default function MentionsPage() {
                   <div><dt className="inline">Discovered: </dt><dd className="inline">{fmtDate(m.discovered_at)}</dd></div>
                   {m.attribution && <div><dt className="inline">Attribution: </dt><dd className="inline">{m.attribution}</dd></div>}
                   {m.redistribution_restrictions && <div><dt className="inline">Redistribution: </dt><dd className="inline">{m.redistribution_restrictions}</dd></div>}
-                  <div><dt className="inline">Analysis: </dt><dd className="inline">{m.processing_status === 'pending' ? 'not yet available (Milestone 3)' : m.processing_status}</dd></div>
+                  <div><dt className="inline">Analysis: </dt><dd className="inline">{STATUS_LABEL[m.processing_status] ?? m.processing_status}{m.sentiment ? ` (${m.sentiment.method === 'llm' ? 'AI model' : m.sentiment.method === 'baseline' ? 'rule-based' : m.sentiment.method})` : ''}</dd></div>
                 </dl>
+                <p className="mt-2 text-xs"><Link className="text-brand-700 hover:underline" href={`/o/${org.id}/mentions/${m.id}`}>Analysis &amp; evidence →</Link>
+                  {m.cluster_id && <> · <Link className="text-brand-700 hover:underline" href={`/o/${org.id}/stories/${m.cluster_id}`}>Story</Link></>}</p>
                 {m.matches.length > 0 && (
                   <p className="mt-2 flex flex-wrap gap-1 text-xs">{m.matches.map((x) => <Badge key={x.queryId} tone="blue">{x.projectName}: {x.queryName} ({x.terms.join(', ')})</Badge>)}</p>
                 )}

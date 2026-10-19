@@ -14,7 +14,7 @@ import { TAXONOMY_VERSION, TOPIC_KEYS, type CustomTopic } from './taxonomy';
 import { normalizeName } from './text';
 import { quotaState, recordAiUsage } from './usage';
 
-export const PIPELINE_VERSION = 'ai-pipeline/1';
+export const PIPELINE_VERSION = 'ai-pipeline/2';   // /2: language detector lexical-profile/2 (headline vocabulary)
 const SYS = '00000000-0000-0000-0000-000000000000';
 
 /** Identifies a processing configuration; a change of model, prompt, taxonomy or pipeline makes earlier results "stale". */
@@ -49,8 +49,12 @@ export class AnalysisService {
     const started = Date.now();
     const prep = await this.db.withTenant(tenantId, SYS, async (c) => {
       const claimed = (await c.query<{ mention_id: string }>(
+        // Also reclaims a row left 'running' by a crashed earlier attempt (a later attempt number), or abandoned for
+        // longer than any analysis can take (a stalled job redelivered with the same attempt number).
         `UPDATE mention_analyses SET status = 'running', attempt = $2, started_at = coalesce(started_at, now()), error = NULL
-         WHERE id = $1 AND status IN ('queued','retrying') RETURNING mention_id`, [analysisId, attempt])).rows[0];
+         WHERE id = $1 AND (status IN ('queued','retrying')
+           OR (status = 'running' AND finished_at IS NULL AND (attempt < $2 OR started_at < now() - interval '15 minutes')))
+         RETURNING mention_id`, [analysisId, attempt])).rows[0];
       if (!claimed) return null;
       const m = (await c.query<MentionRow>('SELECT id, title, excerpt, body, language, publisher, duplicate_status FROM mentions WHERE id = $1', [claimed.mention_id])).rows[0]!;
       const q = await quotaState(c);
@@ -117,6 +121,7 @@ export class AnalysisService {
     // 7–8. Persist, then cluster in the same transaction
     const status = fallbackReason ? 'partial' : 'succeeded';
     const out = await this.db.withTenant(tenantId, SYS, async (c) => {
+      await this.clusters.lock(c, tenantId);
       await this.persist(c, tenantId, analysisId, m, analysis, used, result, custom, text, contentStatus);
       await this.clusters.detach(c, tenantId, m.id);
       const cl = await this.clusters.assign(c, tenantId, m.id);
@@ -128,6 +133,16 @@ export class AnalysisService {
         durationMs: Date.now() - started,
       }, c);
       return cl;
+    }).catch(async (e: unknown) => {
+      // The transaction rolled back; record the failure so the row never stays 'running'.
+      const message = (e as Error)?.message?.slice(0, 300) ?? 'unknown error';
+      logEvent('error', 'analysis.persist_failed', { tenantId, analysisId, message });
+      await this.db.withTenant(tenantId, SYS, async (c) => {
+        await c.query(`UPDATE mention_analyses SET status = $2, error = $3, finished_at = CASE WHEN $2 = 'failed' THEN now() END WHERE id = $1`,
+          [analysisId, isFinalAttempt ? 'failed' : 'retrying', JSON.stringify({ kind: 'internal', message, attempt })]);
+        await c.query(`UPDATE mentions SET processing_status = $2 WHERE id = $1`, [m.id, isFinalAttempt ? 'failed' : 'queued']);
+      });
+      throw e;
     });
     return { outcome: status, clusterId: out.clusterId, clusterVersion: out.version };
   }
@@ -193,7 +208,7 @@ export class AnalysisService {
        VALUES ($1,'mention',$2,$3,$4,$5,$6,$7,$8,$9,$10, now(), true) RETURNING id`,
       [tenantId, m.id, summary.status === 'ok' ? 'ready' : 'insufficient_evidence',
         JSON.stringify(summary.claims.map((cl) => ({ ...cl, supportingMentionIds: [m.id] }))),
-        [...summary.uncertainty, ...(contentStatus === 'headline_only' ? ['Only the headline was available for analysis.'] : [])],
+        [...summary.uncertainty, ...(contentStatus === 'headline_only' && !summary.uncertainty.some((u) => /headline/i.test(u)) ? ['Only the headline was available for analysis.'] : [])],
         summary.status === 'ok' ? [m.id] : [], used.method === 'baseline' ? 'extractive' : 'llm', used.name, result.model, result.promptVersion])).rows[0]!.id;
     await c.query(`UPDATE ai_summaries SET is_current = false WHERE scope = 'mention' AND mention_id = $1 AND id <> $2 AND is_current`, [m.id, sid]);
   }

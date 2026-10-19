@@ -77,7 +77,8 @@ export class ClusterService {
       `UPDATE story_clusters SET label = $2, representative_mention_id = $3, member_count = $4, independent_count = $5, publisher_count = $6,
          first_seen_at = $7, last_seen_at = $8, confidence = $9, method_version = $10, status = 'active', version = version + 1, updated_at = now()
        WHERE id = $1 RETURNING version`,
-      [clusterId, repRow.title, rep.id, rows.length, rows.filter((r) => !r.is_syndicated).length, new Set(rows.map((r) => r.publisher_domain)).size,
+      [clusterId, repRow.title, rep.id, rows.length, // Independent = distinct publishers among non-syndicated records (follow-ups by one outlet are not corroboration).
+        new Set(rows.filter((r) => !r.is_syndicated).map((r) => r.publisher_domain)).size, new Set(rows.map((r) => r.publisher_domain)).size,
         new Date(Math.min(...times)), new Date(Math.max(...times)), Math.round((rows.reduce((n, r) => n + Number(r.score), 0) / rows.length) * 1000) / 1000, CLUSTER_METHOD])).rows[0]!.version;
     if (prev && prev.label !== repRow.title) await this.event(c, tenantId, clusterId, 'relabelled', rep.id, { from: prev.label, to: repRow.title });
     await this.summaries.extractiveCluster(c, tenantId, clusterId);
@@ -85,6 +86,14 @@ export class ClusterService {
   }
 
   /** Assigns a freshly analysed mention to a cluster (or none). Returns the affected cluster and its new version. */
+  /**
+   * Serialises cluster changes within a tenant for the rest of the transaction. Concurrent workers otherwise race:
+   * one record's assignment can add another record as a member while that record's own analysis re-assigns it.
+   */
+  async lock(c: PoolClient, tenantId: string): Promise<void> {
+    await c.query(`SELECT pg_advisory_xact_lock(hashtextextended('civicsignal:cluster:' || $1::text, 0))`, [tenantId]);
+  }
+
   async assign(c: PoolClient, tenantId: string, mentionId: string): Promise<{ clusterId: string | null; version: number | null; action: string }> {
     const w = this.config.ai.clusterWindowHours;
     const target = (await c.query<Row>(

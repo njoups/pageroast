@@ -2,7 +2,7 @@ import { tokenize } from './text';
 
 export const SUPPORTED_LANGUAGES = ['id', 'en'] as const;
 export type SupportedLanguage = (typeof SUPPORTED_LANGUAGES)[number];
-export const LANGUAGE_METHOD = 'lexical-profile/1';
+export const LANGUAGE_METHOD = 'lexical-profile/2';
 
 export interface LanguageResult {
   language: string;          // ISO 639-1 where known; 'und' = undetermined
@@ -12,6 +12,20 @@ export interface LanguageResult {
   scores?: Record<string, number>;
 }
 
+/**
+ * Headline vocabulary: headlines drop most function words, so common Indonesian news verbs and nouns are listed
+ * (general vocabulary, not taken from evaluation items). Much of it is shared with Malay, so it only counts after the
+ * Malay decision, to lift otherwise undetermined Indonesian headlines over the evidence threshold.
+ */
+const ID_HEADLINE = new Set([
+  'minta', 'tolak', 'ungkap', 'klaim', 'usul', 'desak', 'bantah', 'dukung', 'tuntut', 'sebut', 'soroti', 'resmi', 'jadi', 'lagi', 'naik',
+  'turun', 'bakal', 'siap', 'buka', 'tutup', 'meninggal', 'dunia', 'tewas', 'korban', 'kasus', 'sidang', 'hakim', 'jaksa', 'tersangka',
+  'terdakwa', 'ketua', 'calon', 'anak', 'bocah', 'ribu', 'juta', 'miliar', 'triliun', 'besok', 'kemarin', 'jelang', 'imbas', 'lewat',
+  'hasil', 'pasar', 'sekolah', 'siswa', 'guru', 'sakit', 'dokter', 'pasien', 'kereta', 'pesawat', 'kapal', 'cuaca', 'hujan', 'gempa',
+  'erupsi', 'gunung', 'kebakaran', 'asap', 'kabut', 'polda', 'polres', 'kapolri', 'kapolda', 'prajurit', 'jenderal', 'mantan', 'wakil',
+  'pemkab', 'pemkot', 'pemprov', 'partai', 'kader', 'demo', 'macet', 'mudik', 'libur', 'bansos', 'subsidi', 'pajak', 'utang', 'ekspor',
+  'impor', 'rupiah', 'saham', 'bursa', 'emas', 'medali', 'kerja', 'sama', 'catat', 'dorong', 'pacu', 'pasti', 'perluas', 'target',
+  'cegah', 'gagalkan', 'bantu', 'usaha', 'modal', 'kinerja', 'industri', 'perusahaan', 'pertama', 'hukum']);
 /** Function words and highly distinctive vocabulary per language. Kept small and auditable on purpose. */
 const PROFILES: Record<string, string[]> = {
   id: ['yang', 'dan', 'di', 'ke', 'dari', 'untuk', 'dengan', 'ini', 'itu', 'tidak', 'akan', 'pada', 'adalah', 'dalam', 'oleh', 'juga',
@@ -80,6 +94,8 @@ export function detectLanguage(text: string): LanguageResult {
   if (!idOnly && (msStrong >= 2 || (msHits >= 1 && (scores.ms ?? 0) >= (scores.id ?? 0) - 1.5 && (scores.ms ?? 0) >= (scores.en ?? 0)))) {
     return { language: 'ms', confidence: Math.min(0.9, 0.5 + msHits * 0.15), method: LANGUAGE_METHOD, supported: false, scores };
   }
+  // Headline vocabulary only after the Malay decision (it is largely shared with Malay).
+  scores.id = (scores.id ?? 0) + toks.filter((t) => ID_HEADLINE.has(t)).length;
   const ranked = Object.entries(scores).sort((a, b) => b[1] - a[1]);
   const [best, bestScore] = ranked[0]!;
   const second = ranked[1]?.[1] ?? 0;

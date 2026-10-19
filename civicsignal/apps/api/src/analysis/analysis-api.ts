@@ -114,7 +114,9 @@ export class AnalysisApiService {
     const ids = await this.db.withTenant(t.orgId, auth.userId, async (c) => {
       const cond = scope === 'pending' ? `m.analysis_id IS NULL AND m.processing_status IN ('pending','quota_exceeded')`
         : scope === 'failed' ? `m.processing_status = 'failed'`
-        : `m.analysis_id IS NOT NULL AND NOT EXISTS (SELECT 1 FROM mention_analyses a WHERE a.id = m.analysis_id AND a.idempotency_key LIKE $2 || ':%')`;
+        // Stale: analysed, or skipped (e.g. language undetermined), under a different processing configuration.
+        : `((m.analysis_id IS NOT NULL AND NOT EXISTS (SELECT 1 FROM mention_analyses a WHERE a.id = m.analysis_id AND a.idempotency_key LIKE $2 || ':%'))
+            OR (m.processing_status = 'skipped' AND NOT EXISTS (SELECT 1 FROM mention_analyses a WHERE a.mention_id = m.id AND a.idempotency_key LIKE $2 || ':%')))`;
       return (await c.query<{ id: string }>(`SELECT m.id FROM mentions m WHERE m.duplicate_status = 'original' AND ${cond} ORDER BY m.discovered_at DESC LIMIT $1`,
         scope === 'stale' ? [limit, key] : [limit])).rows.map((r) => r.id);
     });

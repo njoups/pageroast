@@ -2,7 +2,7 @@
   "provider": "baseline",
   "model": "civicsignal-baseline",
   "method": "baseline",
-  "evaluatedAt": "2026-10-19T16:44:46.164Z",
+  "evaluatedAt": "2026-10-19T17:02:30.561Z",
   "dataset": "test/fixtures/eval/holdout-set.json (v1, synthetic, not used for tuning)",
   "lang": {
     "macroF1": 1,

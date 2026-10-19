@@ -4,7 +4,7 @@ import { AppConfig, CONFIG } from '../config';
 import { Database } from '../database/database.service';
 import { logEvent } from '../ingestion/log';
 import { KEY_PREFIX, redisConnection, type Redis } from '../ingestion/queue';
-import { AnalysisService, analysisKey } from './analysis.service';
+import { AnalysisService, analysisKey, PIPELINE_VERSION } from './analysis.service';
 import { ClusterService } from './cluster.service';
 import { PROMPTS, promptSha256 } from './prompts';
 import { ANALYSIS_PROVIDER, BaselineProvider, createProvider, FALLBACK_PROVIDER, type AnalysisProvider } from './providers';
@@ -44,9 +44,9 @@ export class AnalysisEnqueuer {
       }
       const r = await c.query<{ id: string; mention_id: string }>(
         `INSERT INTO mention_analyses (tenant_id, mention_id, idempotency_key, trigger, pipeline_version, requested_by)
-         SELECT $1, m.id, $2 || ':' || $3 || $4, $3, 'ai-pipeline/1', $5 FROM mentions m WHERE m.id = ANY($6::uuid[])
+         SELECT $1, m.id, $2 || ':' || $3 || $4, $3, $7, $5 FROM mentions m WHERE m.id = ANY($6::uuid[])
          ON CONFLICT (tenant_id, mention_id, idempotency_key) DO NOTHING RETURNING id, mention_id`,
-        [tenantId, key, trigger, suffix, requestedBy, mentionIds]);
+        [tenantId, key, trigger, suffix, requestedBy, mentionIds, PIPELINE_VERSION]);
       if (r.rows.length) await c.query(`UPDATE mentions SET processing_status = 'queued' WHERE id = ANY($1::uuid[]) AND processing_status <> 'running'`, [r.rows.map((x) => x.mention_id)]);
       return r.rows.map((x) => x.id);
     });

@@ -3,6 +3,7 @@ import Link from 'next/link';
 import { useParams, useRouter } from 'next/navigation';
 import { useCallback, useEffect, useState, type FormEvent } from 'react';
 import { useOrg } from '@/components/org-context';
+import { ProjectSummaries, TopicCategories } from '@/components/project-intel';
 import { QueryEditor } from '@/components/query-editor';
 import { Alert, Empty, Loading, PageHeader } from '@/components/ui';
 import { api, can, errorMessage, fmtDate, parseLanguages, ROLE_LABEL, type Member, type Project, type Role } from '@/lib/api';
@@ -110,7 +111,11 @@ export default function ProjectDetail() {
         </section>}
       </div>
       <div className="mt-6"><QueryEditor orgId={org.id} projectId={project.id} canEdit={manage && !archived} /></div>
-      <p className="mt-3 text-sm"><Link className="text-brand-600 underline" href={`/o/${org.id}/mentions`}>View mentions matched to your projects →</Link></p>
+      <div className="mt-6 grid gap-6 lg:grid-cols-2">
+        <ProjectSummaries orgId={org.id} projectId={project.id} canRequest />
+        <TopicCategories orgId={org.id} projectId={project.id} canEdit={manage && !archived} />
+      </div>
+      <p className="mt-3 text-sm"><Link className="text-brand-600 underline" href={`/o/${org.id}/mentions`}>View mentions matched to your projects →</Link> · <Link className="text-brand-600 underline" href={`/o/${org.id}/analytics`}>Analytics →</Link></p>
     </>
   );
 }

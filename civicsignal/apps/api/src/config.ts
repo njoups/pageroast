@@ -96,12 +96,12 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
       defaultHostSpacingMs: Number(env.INGESTION_DEFAULT_HOST_SPACING_MS ?? 1000),
     },
     ai: {
-      provider: (env.AI_PROVIDER as AppConfig['ai']['provider']) ?? (env.ANTHROPIC_API_KEY ? 'anthropic' : 'baseline'),
+      provider: (env.AI_PROVIDER as AppConfig['ai']['provider']) || (env.ANTHROPIC_API_KEY ? 'anthropic' : 'baseline'),
       anthropicApiKey: env.ANTHROPIC_API_KEY || null,
       // Explicit default so an ambient ANTHROPIC_BASE_URL (e.g. a developer tool's proxy) is never inherited.
-      anthropicBaseUrl: env.AI_ANTHROPIC_BASE_URL ?? 'https://api.anthropic.com',
-      model: env.AI_MODEL ?? 'claude-opus-5-5',
-      effort: (env.AI_EFFORT as AppConfig['ai']['effort']) ?? 'low',
+      anthropicBaseUrl: env.AI_ANTHROPIC_BASE_URL || 'https://api.anthropic.com',
+      model: env.AI_MODEL || 'claude-opus-5-5',
+      effort: (env.AI_EFFORT as AppConfig['ai']['effort']) || 'low',
       timeoutMs: Number(env.AI_TIMEOUT_MS ?? 60_000),
       refusalFallback: env.AI_REFUSAL_FALLBACK !== 'off',
       fallback: env.AI_FALLBACK === 'none' ? 'none' : 'baseline',
