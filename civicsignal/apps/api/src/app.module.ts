@@ -1,5 +1,8 @@
 import { Module } from '@nestjs/common';
 import { AnalysisApiService, AnalysisController } from './analysis/analysis-api';
+import { AlertsCoreModule } from './alerts/alerts-queue';
+import { IssuesController, IssuesService } from './alerts/issues-api';
+import { AlertRulesController, RulesService } from './alerts/rules-api';
 import { AuditController } from './audit/audit.controller';
 import { AuditService } from './audit/audit.service';
 import { AuthController } from './auth/auth.controller';
@@ -22,13 +25,13 @@ import { ProjectsController } from './projects/projects.controller';
 import { ProjectsService } from './projects/projects.service';
 
 @Module({
-  imports: [DatabaseModule, IngestionCoreModule],
+  imports: [DatabaseModule, IngestionCoreModule, AlertsCoreModule],
   controllers: [AuthController, OrganizationsController, InvitationsController, ProjectsController, AuditController, HealthController, PlatformController,
-    SourcesController, QueriesController, MentionsController, AnalysisController],
+    SourcesController, QueriesController, MentionsController, AnalysisController, IssuesController, AlertRulesController],
   providers: [
     { provide: IDENTITY_PROVIDER, useClass: LocalIdentityProvider },
     AuditService, OrganizationsService, ProjectsService, SessionGuard, TenantGuard, RateLimitGuard, FailureThrottle,
-    SourcesService, QueriesService, MentionsService, AnalysisApiService,
+    SourcesService, QueriesService, MentionsService, AnalysisApiService, IssuesService, RulesService,
   ],
 })
 export class AppModule {}

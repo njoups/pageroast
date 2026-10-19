@@ -69,10 +69,24 @@ export class SafeHttpClient {
     throw new HttpFetchError('redirect', `Too many redirects (max ${this.opts.maxRedirects})`);
   }
 
-  private once(target: URL, headers: Record<string, string>, signal: AbortSignal): Promise<Omit<SafeResponse, 'finalUrl'>> {
+  /**
+   * POST with the same address checks. Redirects are never followed (a 3xx is returned to the caller), so a receiver
+   * cannot bounce the request, with its signed body, to another host.
+   */
+  async post(url: string, body: string, headers: Record<string, string> = {}, signal?: AbortSignal): Promise<SafeResponse> {
+    const deadline = AbortSignal.timeout(this.opts.timeoutMs);
+    const combined = signal ? AbortSignal.any([signal, deadline]) : deadline;
+    let target: URL;
+    try { target = assertFetchableUrl(url, { allowPrivateHosts: this.opts.allowPrivateHosts, allowAnyPort: this.opts.allowAnyPort }); }
+    catch (e) { throw new HttpFetchError('unsafe', (e as Error).message); }
+    const res = await this.once(target, { 'content-type': 'application/json', 'content-length': String(Buffer.byteLength(body)), ...headers }, combined, 'POST', body);
+    return { ...res, finalUrl: target.toString() };
+  }
+
+  private once(target: URL, headers: Record<string, string>, signal: AbortSignal, method: 'GET' | 'POST' = 'GET', body?: string): Promise<Omit<SafeResponse, 'finalUrl'>> {
     return new Promise((resolve, reject) => {
       const req = (target.protocol === 'https:' ? httpsRequest : httpRequest)(target, {
-        method: 'GET',
+        method,
         lookup: this.guardedLookup,
         agent: false, // one connection per request: no pooled sockets outlive a collection run
         signal,
@@ -98,7 +112,7 @@ export class SafeHttpClient {
         if (e.name === 'AbortError' || e.code === 'ABORT_ERR') return reject(new HttpFetchError('timeout', `Request to ${redactUrl(target.toString())} timed out`));
         reject(new HttpFetchError('network', `${e.code ?? 'error'} contacting ${redactUrl(target.toString())}`));
       });
-      req.end();
+      req.end(body);
     });
   }
 }

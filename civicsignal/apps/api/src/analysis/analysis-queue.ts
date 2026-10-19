@@ -102,7 +102,11 @@ export async function registerPromptVersions(db: Database): Promise<void> {
   });
 }
 
-export interface AnalysisWorkerDeps { config: AppConfig; analysis: AnalysisService; summaries: SummariesService; enqueuer: AnalysisEnqueuer; redis: Redis; provider: AnalysisProvider }
+export interface AnalysisWorkerDeps {
+  config: AppConfig; analysis: AnalysisService; summaries: SummariesService; enqueuer: AnalysisEnqueuer; redis: Redis; provider: AnalysisProvider;
+  /** Called after a record is analysed (the worker uses it to queue alert evaluation for the tenant). */
+  onAnalyzed?: (tenantId: string) => Promise<void>;
+}
 
 export function analysisBackoff(attemptsMade: number, baseMs: number, err?: Error, rand = Math.random): number {
   if (err instanceof ProviderError && err.opts.retryAfterMs) return Math.min(err.opts.retryAfterMs + Math.floor(rand() * 1000), 3600_000);
@@ -123,6 +127,7 @@ export function createAnalysisWorker(d: AnalysisWorkerDeps): Worker<AnalysisJob>
       if (job.data.type === 'analyze') {
         const r = await d.analysis.run(job.data.tenantId, job.data.analysisId, attempt, final);
         if (r.clusterId && r.clusterVersion && d.provider.method !== 'baseline') await d.enqueuer.enqueueClusterSummary(job.data.tenantId, r.clusterId, r.clusterVersion);
+        if (r.outcome === 'succeeded' || r.outcome === 'partial') await d.onAnalyzed?.(job.data.tenantId).catch((e: Error) => logEvent('warn', 'analysis.on_analyzed_failed', { message: e.message }));
         return r;
       }
       if (job.data.type === 'project_summary') return await d.summaries.generateProjectSummary(job.data.tenantId, job.data.summaryId);

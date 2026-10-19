@@ -7,7 +7,9 @@ import { OWNER_URL } from '../env';
 
 const REQUIRED = ['tenants', 'users', 'memberships', 'projects', 'project_members', 'monitoring_queries', 'sources', 'connectors',
   'connector_runs', 'mentions', 'mention_entities', 'mention_topics', 'sentiment_results', 'story_clusters', 'alert_rules',
-  'alert_events', 'reports', 'report_sources', 'subscriptions', 'usage_records', 'retention_policies', 'audit_events'];
+  'alert_events', 'reports', 'report_sources', 'subscriptions', 'usage_records', 'retention_policies', 'audit_events',
+  'alert_rule_versions', 'detected_issues', 'alert_evidence', 'alert_assignments', 'alert_notes', 'notification_preferences',
+  'notification_deliveries', 'webhook_endpoints', 'webhook_deliveries', 'activity_hourly', 'topic_activity_daily', 'alert_evaluations'];
 
 describe('migrations', () => {
   let c: Client;

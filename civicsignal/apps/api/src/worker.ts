@@ -14,8 +14,12 @@ import { AnalysisEnqueuer, createAnalysisWorker, registerPromptVersions } from '
 import { AnalysisService } from './analysis/analysis.service';
 import { SummariesService } from './analysis/summaries.service';
 import { ANALYSIS_PROVIDER, type AnalysisProvider } from './analysis/providers';
+import { AlertsCoreModule, AlertsEnqueuer, alertsSchedulerTick, createAlertsWorker } from './alerts/alerts-queue';
+import { EvaluatorService } from './alerts/evaluator.service';
+import { IssueSummaryService } from './alerts/issue-summary.service';
+import { NotificationService } from './alerts/notifications.service';
 
-@Module({ imports: [DatabaseModule, IngestionCoreModule] })
+@Module({ imports: [DatabaseModule, IngestionCoreModule, AlertsCoreModule] })
 class WorkerModule {}
 
 /**
@@ -37,9 +41,16 @@ async function main() {
   await registerPromptVersions(db);
   const consumer = runConsumer ? createWorker({ config, db, pipeline: ctx.get(IngestionPipeline) }) : null;
   const provider = ctx.get<AnalysisProvider>(ANALYSIS_PROVIDER);
+  const alertsEnqueuer = ctx.get(AlertsEnqueuer);
   const analysisWorker = runConsumer && !process.argv.includes('--no-analysis')
-    ? createAnalysisWorker({ config, analysis: ctx.get(AnalysisService), summaries: ctx.get(SummariesService), enqueuer: ctx.get(AnalysisEnqueuer), redis, provider })
+    ? createAnalysisWorker({ config, analysis: ctx.get(AnalysisService), summaries: ctx.get(SummariesService), enqueuer: ctx.get(AnalysisEnqueuer), redis, provider,
+      // New analyses are evaluated shortly after (debounced by the per-bucket job id).
+      onAnalyzed: (tenantId) => alertsEnqueuer.evaluate(tenantId, 'analysis', 30_000) })
     : null;
+  const alertsWorker = runConsumer && !process.argv.includes('--no-alerts')
+    ? createAlertsWorker({ config, evaluator: ctx.get(EvaluatorService), notifications: ctx.get(NotificationService), summaries: ctx.get(IssueSummaryService), enqueuer: alertsEnqueuer })
+    : null;
+  logEvent('info', 'alerts.channels', ctx.get(NotificationService).channelStatus());
   logEvent('info', 'analysis.provider', { provider: provider.name, model: provider.model, method: provider.method });
   const beat = () => redis.set(`${KEY_PREFIX}:worker:heartbeat:${id}`, JSON.stringify({ at: new Date().toISOString(), consumer: runConsumer, scheduler: runScheduler }), 'EX', 60);
   await beat();
@@ -50,15 +61,25 @@ async function main() {
     try { await schedulerTick(db, queue); } catch (e) { logEvent('error', 'ingestion.scheduler_error', { message: (e as Error).message }); } finally { ticking = false; }
   };
   const scheduler = runScheduler ? setInterval(() => void tick(), config.ingestion.schedulerIntervalMs) : null;
+  let alertsTicking = false;
+  const alertsTick = async () => {
+    if (alertsTicking) return; alertsTicking = true;
+    try { await alertsSchedulerTick(db, alertsEnqueuer); } catch (e) { logEvent('error', 'alerts.scheduler_error', { message: (e as Error).message }); } finally { alertsTicking = false; }
+  };
+  const alertsScheduler = runScheduler ? setInterval(() => void alertsTick(), config.alerts.evaluateIntervalMs) : null;
+  if (runScheduler) void alertsTick();
   if (runScheduler) void tick();
   logEvent('info', 'ingestion.worker_started', { id, consumer: runConsumer, scheduler: runScheduler, concurrency: config.ingestion.workerConcurrency });
 
   const shutdown = async (signal: string) => {
     logEvent('info', 'ingestion.worker_stopping', { id, signal });
     if (scheduler) clearInterval(scheduler);
+    if (alertsScheduler) clearInterval(alertsScheduler);
     clearInterval(heartbeat);
     await consumer?.worker.close();   // waits for in-flight jobs
     await analysisWorker?.close();
+    await alertsWorker?.worker.close();
+    await alertsWorker?.dlq.close();
     await consumer?.dlq.close();
     consumer?.redis.disconnect();
     await redis.del(`${KEY_PREFIX}:worker:heartbeat:${id}`).catch(() => undefined);

@@ -21,7 +21,7 @@ export interface ArticleInput {
   title: string; excerpt: string | null; body: string | null; publisher: string | null; language: string; customTopics: CustomTopic[];
 }
 export interface MultiInput {
-  scope: 'cluster' | 'project' | 'period'; language: string;
+  scope: 'cluster' | 'project' | 'period' | 'issue'; language: string;
   records: Array<{ ref: string; publisher: string; published: string | null; title: string; excerpt: string | null; syndicated: boolean }>;
 }
 

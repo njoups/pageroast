@@ -47,6 +47,23 @@ export interface AppConfig {
     clusterThreshold: number;
     clusterWindowHours: number;
   };
+  /** Base URL of the web app, used for links in notifications. */
+  appBaseUrl: string;
+  alerts: {
+    evaluateIntervalMs: number;        // scheduler cadence (each tenant is evaluated at most once per bucket)
+    bucketMinutes: number;             // idempotency bucket for evaluations
+    refreshHours: number;              // activity aggregates recomputed for this many recent hours per evaluation
+    attempts: number;                  // notification / webhook delivery attempts
+    backoffBaseMs: number;
+    emailPerMinute: number;            // per tenant
+    webhookPerMinute: number;          // per tenant
+    notificationsPerDay: number;       // per tenant, all channels; beyond it deliveries are suppressed and logged
+    webhookTimeoutMs: number;
+    webhookAllowHttp: boolean;         // tests only; refused in production
+    collectionStaleHours: number;
+  };
+  email: { smtpUrl: string | null; from: string | null };
+  whatsapp: { accessToken: string | null; phoneNumberId: string | null; templateName: string | null; templateLanguage: string; apiBaseUrl: string };
 }
 
 function parseHostSpacing(v: string | undefined): Record<string, number> {
@@ -112,7 +129,30 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
       clusterThreshold: Number(env.CLUSTER_THRESHOLD ?? 0.42),
       clusterWindowHours: Number(env.CLUSTER_WINDOW_HOURS ?? 72),
     },
+    appBaseUrl: (env.APP_BASE_URL || 'http://localhost:3000').replace(/\/+$/, ''),
+    alerts: {
+      evaluateIntervalMs: Number(env.ALERTS_EVALUATE_INTERVAL_MS || 60_000),
+      bucketMinutes: Number(env.ALERTS_BUCKET_MINUTES || 5),
+      refreshHours: Number(env.ALERTS_REFRESH_HOURS || 48),
+      attempts: Number(env.ALERTS_DELIVERY_ATTEMPTS || 5),
+      backoffBaseMs: Number(env.ALERTS_BACKOFF_BASE_MS || 30_000),
+      emailPerMinute: Number(env.ALERTS_EMAIL_PER_MINUTE || 60),
+      webhookPerMinute: Number(env.ALERTS_WEBHOOK_PER_MINUTE || 60),
+      notificationsPerDay: Number(env.ALERTS_NOTIFICATIONS_PER_DAY || 2000),
+      webhookTimeoutMs: Number(env.ALERTS_WEBHOOK_TIMEOUT_MS || 10_000),
+      webhookAllowHttp: env.ALERTS_WEBHOOK_ALLOW_HTTP === 'true',
+      collectionStaleHours: Number(env.ALERTS_COLLECTION_STALE_HOURS || 6),
+    },
+    email: { smtpUrl: env.SMTP_URL || null, from: env.EMAIL_FROM || null },
+    whatsapp: {
+      accessToken: env.WHATSAPP_ACCESS_TOKEN || null, phoneNumberId: env.WHATSAPP_PHONE_NUMBER_ID || null,
+      templateName: env.WHATSAPP_TEMPLATE_NAME || null, templateLanguage: env.WHATSAPP_TEMPLATE_LANGUAGE || 'id',
+      apiBaseUrl: env.WHATSAPP_API_BASE_URL || 'https://graph.facebook.com/v21.0',
+    },
   };
+  if (cfg.email.smtpUrl && !/^smtps?:\/\//.test(cfg.email.smtpUrl)) throw new Error('SMTP_URL must start with smtp:// or smtps://');
+  if (cfg.email.smtpUrl && !cfg.email.from) throw new Error('EMAIL_FROM is required when SMTP_URL is set');
+  if (cfg.email.from && /[\r\n]/.test(cfg.email.from)) throw new Error('EMAIL_FROM must be a single line');
   if (!['anthropic', 'baseline', 'test'].includes(cfg.ai.provider)) throw new Error('AI_PROVIDER must be anthropic, baseline or test');
   if (!['low', 'medium', 'high', 'xhigh', 'max'].includes(cfg.ai.effort)) throw new Error('AI_EFFORT must be low|medium|high|xhigh|max');
   if (prod) {
@@ -123,6 +163,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
     if (cfg.ingestion.allowPrivateHosts) throw new Error('INGESTION_ALLOW_PRIVATE_HOSTS is for tests only and is refused in production');
     if (cfg.ai.provider === 'test') throw new Error('AI_PROVIDER=test is for automated tests only and is refused in production');
     if (cfg.ai.provider === 'anthropic' && !cfg.ai.anthropicApiKey) throw new Error('AI_PROVIDER=anthropic requires ANTHROPIC_API_KEY');
+    if (cfg.alerts.webhookAllowHttp) throw new Error('ALERTS_WEBHOOK_ALLOW_HTTP is for tests only and is refused in production');
   }
   return cfg;
 }
