@@ -1,12 +1,14 @@
 # Implementation Status
 
-Last verified: 2026-10-19, from code and test runs (not from plans). Commands and results are at the bottom.
+Last verified: 2026-10-19, from code, test runs and live collection (not from plans). Commands and results are at the bottom.
 
 ## Completed and verified
+
+### Milestone 1: foundation
 | Area | Evidence |
 |---|---|
-| Migrations 0001–0005 apply cleanly to an empty DB; re-run is a no-op; edited migrations are refused | `test/db/migrations.spec.ts` |
-| RLS enabled **and forced** on all 24 tables; app role not superuser, no BYPASSRLS, owns nothing, no TEMP | migrations spec, mutation check (disabling RLS fails 7 tests) |
+| Migrations 0001–0006 apply cleanly to an empty DB; re-run is a no-op; edited migrations are refused | `test/db/migrations.spec.ts` |
+| RLS enabled **and forced** on all 27 tables; app role not superuser, no BYPASSRLS, owns nothing, no TEMP | migrations spec, mutation check (disabling RLS fails 7 tests) |
 | Tenant isolation at DB level: read, insert, update, delete, move-between-tenants, composite FKs | `test/db/rls.spec.ts` |
 | Tenant isolation over HTTP: every org route returns 404 to non-members; multi-org users see only the addressed org | `tenancy.e2e.ts`, `regressions.e2e.ts` |
 | Column-level grants: app role cannot set `is_platform_admin`, move memberships, or truncate/edit audit | `regressions.e2e.ts` |
@@ -20,19 +22,43 @@ Last verified: 2026-10-19, from code and test runs (not from plans). Commands an
 | Web: open-redirect guard (incl. `/\host`, `/.//host`), CSP and security headers | `apps/web/src/lib/api.test.ts`, browser smoke |
 | Backup/restore drill on local PG16 | SECURITY.md |
 
+### Milestone 2: news ingestion (verified 2026-10-19)
+| Area | Evidence |
+|---|---|
+| Source registry: licence, authorization basis, permitted fields, full-text flag, refresh interval, rate limit, daily quota, retention, redistribution and attribution, enable/disable, health, last success/attempt/error, record count | `integration/ingestion.e2e.ts`, browser smoke |
+| Authorization gate: unauthorized sources cannot be enabled or run (API + DB `CHECK`) | ingestion e2e |
+| RSS 2.0 / RSS 1.0 / Atom parsing; malformed feeds, entity-expansion and HTML login pages rejected; missing dates kept null; Indonesian date formats | `unit/ingestion/feed-parser.spec.ts` |
+| Conditional requests (ETag/Last-Modified → 304), `Cache-Control` honoured (capped), `Retry-After` honoured | unit + ingestion e2e (local server) |
+| SSRF: blocked ranges incl. metadata, DNS checked at connect time, redirects re-validated, size/timeout/redirect limits | `unit/ingestion/url.spec.ts`, `integration/safe-http.spec.ts` |
+| Pipeline with per-run stage record; licence-based field storage; licence snapshot in provenance; discovery ≠ publication time | ingestion e2e |
+| Dedup: canonical URL, same-publisher content hash or headline, near-duplicate similarity; different publishers never merged | unit + ingestion e2e + live |
+| Boolean query language (phrases, AND/OR/NOT, groups, prefix*, exclusions, aliases, languages), safe parser with limits, live UI validation, re-match on save | `unit/ingestion/query.spec.ts`, e2e, browser smoke |
+| BullMQ queue: idempotent job ids, scheduler with `SKIP LOCKED`, per-source lock, host spacing, per-source rate/quota gates, jittered exponential backoff, DLQ, safe single retry | `integration/queue.e2e.ts` (real Redis) |
+| Health from results only (unknown / healthy / degraded / failing / disabled, incl. lag) | unit + e2e |
+| Metrics: attempts, success/failure, discovered, rejected, duplicates, known, matches, retries, rate-limited, latency avg/p95, lag, worker heartbeat; platform queue depth + DLQ | e2e, UI |
+| Tenant isolation for sources, runs, mentions, matches, credentials (HTTP, worker, DB composite FKs) | ingestion e2e |
+| UI: Sources (list, add/edit, enable/disable, collect now, runs, retry, errors), Mentions (search, filters, attribution, both timestamps), Monitoring, project queries, Overview with real data | browser smoke against live data |
+| **Live:** ANTARA News Terkini RSS and CNN Indonesia Nasional RSS collected (150 records, 45 matches; second run 3 new / 147 known) | docs/CONNECTORS.md |
+
 ## Partially implemented
-- **Identity:** local adapter only. No MFA, no password reset, no email verification.
-- **Rate limiting:** in-process memory (per API instance).
-- **Client IP:** trustworthy only behind an edge proxy that overwrites `X-Forwarded-For` (Caddy in `docker-compose.yml`).
-  Next.js rewrites pass client-supplied `X-Forwarded-For` through unchanged (verified with an echo server).
-- **Docker Compose:** config validates; images and stack have **not** been run (no Docker daemon available).
+- **GDELT connector:** implemented and contract-tested. **Not verified live**: every attempt from this environment returned
+  429/503 (shared egress IP). Health shows it honestly as failing.
+- **Second *licensed* connector:** none. No commercial provider or publisher API is contracted. Encrypted credential storage
+  exists (AES-256-GCM, API never returns secrets) but no connector uses it yet.
+- **Pipeline stages "queue analysis" and "evaluate alerts":** recorded as `not_implemented` (Milestones 3 and 4); mentions stay `processing_status = pending`.
+- **Retention:** expiry is computed per record, but nothing deletes expired records yet (Milestone 6).
+- **Identity:** local adapter only (no MFA, no password reset, no email verification).
+- **Rate limiting of login:** in-process memory per API instance (ingestion gates are in Redis).
+- **Client IP** is trustworthy only behind an edge proxy that overwrites `X-Forwarded-For` (Caddy in Compose).
+- **Docker Compose** (now with Redis + worker) validates, but images and stack have **not** been run (no Docker daemon available).
+- **Conditional GET:** a 304 has been verified only against the local test server. Live feeds changed every minute or sent no ETag.
 
 ## Missing
-- News ingestion: source registry API/UI, connectors, queue/worker, dedup, query matching, mentions UI (Milestone 2, in progress).
-- AI analysis, alerts, analytics, reports, billing/metering, retention enforcement, export/deletion workflows, break-glass access.
+AI analysis (sentiment, entities, summaries, clustering), alerts, analytics, reports, billing/metering enforcement, retention jobs,
+export/deletion workflows, break-glass support access, social connectors, licensed-provider connector.
 
 ## Broken
-None known. All defects found in the audit below are fixed and have regression tests.
+None known. All automated tests pass (see bottom).
 
 ## Defects found by the 2026-10-19 audit (all fixed)
 | Severity | Defect | Fix |
@@ -58,15 +84,35 @@ None known. All defects found in the audit below are fixed and have regression t
 3. Per-account lockout can be triggered by an attacker against a known email (bounded to 15 minutes).
 
 ## Data-source and licensing risks
-- No source has been legally reviewed. Fetching a publicly offered RSS feed does not grant redistribution rights.
-- See DATA_GOVERNANCE.md and docs/CONNECTORS.md (added with Milestone 2).
+- **No source has been legally reviewed.** The two live RSS sources are registered "for limited integration test only", with a basis
+  that says so, and store headline, link and publication time only. Scheduled collection is left disabled for them.
+- Fetching a publicly offered RSS feed does not grant redistribution rights. The product stores licence terms per source and snapshots
+  them per record, but **deciding** what is permitted is a legal task.
+- Both real feeds embed full article text (`content:encoded`); it is discarded unless the source is marked `permitsFullText`.
+- GDELT's terms permit unrestricted use with citation, but its rate limits make it unsuitable as a primary source at volume.
+- Retention periods are recorded but not yet enforced by deletion.
 
 ## Required external credentials
-Managed IdP · email provider · licensed news provider (optional, Milestone 2 second connector) · Redis (local is fine for dev).
+Managed IdP · email provider · Redis (required for collection) · `CREDENTIALS_KEY` (when a credentialed connector is added) · a licensed news provider or publisher API contract (for a commercial second connector) · written source authorizations.
 
-## Test results (2026-10-19)
-`npm run lint` ✔ · `npm run typecheck` ✔ · API jest: 73 passed / 0 failed / 0 skipped · web node:test: 2 passed ·
-`npm run build` ✔ · `npm audit --omit=dev`: 0 vulnerabilities · GitHub Actions run #1 on 7be9a24: success.
+## Test results (2026-10-19, after Milestone 2)
+| Command | Result |
+|---|---|
+| `npm run lint` | ✔ no errors |
+| `npm run typecheck` | ✔ |
+| API jest (`TEST_REDIS_URL=redis://localhost:6379/15`) | **238 passed, 0 failed, 0 skipped**; three consecutive runs green |
+| web `node:test` | 2 passed, 0 failed, 0 skipped |
+| `npm run build` (API + web) | ✔ |
+| `npm audit --omit=dev` | 0 vulnerabilities |
+| `docker compose config` | valid (stack not run: no Docker daemon) |
+| Migrations 0001–0006 on the existing dev DB | applied; existing users/projects preserved |
+| Live collection | ANTARA + CNN Indonesia RSS ✔; GDELT ✘ (5/5 attempts HTTP 503 → dead-lettered, as designed) |
+
+Found and fixed during the run: a test helper bug, a Jest parallelism issue (test files share one DB/Redis, so `maxWorkers: 1` is
+now in the config), and a real calibration issue from live data (60-day `max-age` on a live feed, now capped).
 
 ## Next milestone
-Milestone 2, news ingestion: see docs/MILESTONE_2_PLAN.md (being implemented now).
+**Milestone 3, AI intelligence:** a provider-independent LLM adapter with structured-output validation, sentiment, entities, topics,
+summaries with evidence references, and event clustering. Also prompt-injection defences, plus token and model/prompt version accounting.
+The new mentions table and `processing_status` are the queue input. Before that, recommended housekeeping: review the publishers' terms
+and verify GDELT (or a licensed provider) from a network that is not throttled.

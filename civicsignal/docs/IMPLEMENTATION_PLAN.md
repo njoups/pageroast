@@ -50,7 +50,7 @@ M1 limitations (carried forward)
 - Members cannot leave an organization themselves; an owner/admin must remove them.
 - Docker images and Compose are config-validated, but the containers have not been built and run here: no Docker daemon was available.
 
-## Milestone 2 — News monitoring ⬜ (next)
+## Milestone 2 — News monitoring ✅ RSS/Atom verified live · 🟡 GDELT not verified live (2026-10-19)
 Acceptance criteria
 1. Source registry CRUD with licence, authorization basis, permitted fields, retention and attribution; only `authorized` sources can be scheduled.
 2. `Connector` interface + shared contract test suite every connector must pass (fetch, normalise, error taxonomy, rate-limit respect).
@@ -66,7 +66,11 @@ FTS mention search, connector health dashboard.
 Acceptance: real records collected from ≥2 approved sources; duplicates collapsed; provenance and license stored;
 body stored only if the source licence permits; cross-tenant search tests.
 
-## Milestone 3 — AI intelligence ⬜
+Results: see docs/IMPLEMENTATION_STATUS.md and docs/CONNECTORS.md. Criterion 3 is met for the RSS/Atom connector (two live Indonesian
+feeds). The GDELT connector passes its contract tests, but every live attempt from the development environment was throttled or answered 503,
+so it is **not** counted as verified.
+
+## Milestone 3 — AI intelligence ⬜ (next)
 Provider-independent LLM adapter, structured-output validation, sentiment/topic/entity/summary/cluster with evidence
 references, prompt-injection defences, token accounting, model + prompt version tracking.
 

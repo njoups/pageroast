@@ -4,10 +4,14 @@ import request from 'supertest';
 import { createApp } from '../src/app.factory';
 import { APP_URL, OWNER_URL } from './env';
 
+export const TEST_REDIS_URL = process.env.TEST_REDIS_URL ?? 'redis://localhost:6379/15';
+
 export async function testApp(env: Record<string, string> = {}): Promise<INestApplication> {
   Object.assign(process.env, {
     NODE_ENV: 'test', DATABASE_URL: APP_URL, MIGRATION_DATABASE_URL: OWNER_URL,
-    SCRYPT_N: '1024', RATE_LIMIT_ENABLED: 'false', APP_ORIGINS: 'http://localhost:3000', ...env,
+    SCRYPT_N: '1024', RATE_LIMIT_ENABLED: 'false', APP_ORIGINS: 'http://localhost:3000',
+    // Ingestion defaults per app so settings never leak between test files sharing this process.
+    REDIS_URL: '', INGESTION_ALLOW_PRIVATE_HOSTS: 'false', CREDENTIALS_KEY: '', ...env,
   });
   const app = await createApp({ logger: false });
   await app.init();

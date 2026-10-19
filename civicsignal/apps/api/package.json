@@ -10,17 +10,22 @@
     "lint": "eslint src test scripts",
     "typecheck": "tsc --noEmit -p tsconfig.json",
     "test": "jest --runInBand",
-    "docs:matrix": "tsx scripts/render-matrix.ts"
+    "docs:matrix": "tsx scripts/render-matrix.ts",
+    "worker": "tsx src/worker.ts",
+    "worker:prod": "node dist/worker.js"
   },
   "dependencies": {
     "@nestjs/common": "^11.0.0",
     "@nestjs/core": "^11.0.0",
     "@nestjs/platform-express": "^11.0.0",
     "@nestjs/swagger": "^11.0.0",
+    "bullmq": "6.3.11",
     "class-transformer": "^0.5.1",
     "class-validator": "^0.14.1",
     "cookie-parser": "^1.4.7",
+    "fast-xml-parser": "5.11.2",
     "helmet": "^8.0.0",
+    "ioredis": "5.11.1",
     "pg": "^8.13.0",
     "reflect-metadata": "^0.2.2",
     "rxjs": "^7.8.1"

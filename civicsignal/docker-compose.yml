@@ -1,4 +1,4 @@
-# Local development stack. Redis/BullMQ and the Python worker join in Milestones 2–3.
+# Local development stack: Postgres, Redis (BullMQ), API, ingestion worker, web, and a Caddy edge proxy.
 services:
   db:
     image: postgres:16
@@ -10,6 +10,15 @@ services:
     volumes: [pgdata:/var/lib/postgresql/data]
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U civicsignal_owner -d civicsignal"]
+      interval: 5s
+      retries: 20
+
+  redis:
+    image: redis:7
+    command: ["redis-server", "--appendonly", "yes"]
+    volumes: [redisdata:/data]
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
       interval: 5s
       retries: 20
 
@@ -34,7 +43,21 @@ services:
       SESSION_TTL_SECONDS: ${SESSION_TTL_SECONDS:-43200}
       # Only valid because the edge proxy below overwrites X-Forwarded-For. Never expose web or api directly.
       TRUST_PROXY: "true"
-    depends_on: { migrate: { condition: service_completed_successfully } }
+      REDIS_URL: redis://redis:6379/0
+      CREDENTIALS_KEY: ${CREDENTIALS_KEY:-}
+    depends_on: { migrate: { condition: service_completed_successfully }, redis: { condition: service_healthy } }
+
+  worker:
+    build: { context: ., dockerfile: apps/api/Dockerfile }
+    command: ["node", "apps/api/dist/worker.js"]
+    environment:
+      NODE_ENV: production
+      DATABASE_URL: postgres://civicsignal_app:${APP_DB_PASSWORD}@db:5432/civicsignal
+      MIGRATION_DATABASE_URL: postgres://civicsignal_owner:${POSTGRES_PASSWORD}@db:5432/civicsignal
+      REDIS_URL: redis://redis:6379/0
+      CREDENTIALS_KEY: ${CREDENTIALS_KEY:-}
+      INGESTION_USER_AGENT: ${INGESTION_USER_AGENT:-CivicSignalBot/0.2 (+contact your operator)}
+    depends_on: { migrate: { condition: service_completed_successfully }, redis: { condition: service_healthy } }
 
   web:
     build: { context: ., dockerfile: apps/web/Dockerfile, args: { API_INTERNAL_URL: http://api:4000 } }
@@ -48,3 +71,4 @@ services:
 
 volumes:
   pgdata:
+  redisdata:

@@ -62,7 +62,7 @@ describe('row-level security (database level)', () => {
   });
 
   it('composite foreign keys block cross-tenant references even for the owner role', async () => {
-    await expect(owner.query(`INSERT INTO monitoring_queries (tenant_id, project_id, name) VALUES ($1,$2,'x')`, [A, projB]))
+    await expect(owner.query(`INSERT INTO monitoring_queries (tenant_id, project_id, name, keywords) VALUES ($1,$2,'x','{banjir}')`, [A, projB]))
       .rejects.toThrow(/foreign key/);
   });
 

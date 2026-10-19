@@ -2,12 +2,35 @@
 
 ## Shape
 Modular monolith. One NestJS process exposes a versioned REST API (`/api/v1`). A Next.js app is the only
-first-party client. Background workers (M2+) are separate processes of the same codebase using BullMQ.
+first-party client. The ingestion worker (`apps/api/src/worker.ts`) is a separate process built from the same codebase, using BullMQ on Redis.
 
 ```
-Browser ──HTTPS──> Next.js (apps/web) ──cookie-forwarding──> NestJS API (apps/api) ──> PostgreSQL (RLS)
-                                                          └──> Redis/BullMQ (M2+) ──> workers ──> connectors / LLM
+Browser ─HTTPS─> Caddy edge ─> Next.js (apps/web) ─same-origin proxy─> NestJS API ──> PostgreSQL (RLS)
+                                                                          │  enqueue
+                                                                          ▼
+                     scheduler (in worker) ──claims due sources──> Redis / BullMQ ──> worker ──SafeHttpClient──> public feeds / GDELT
+                                                                          │ dead letters
+                                                                          ▼
+                                                                    ingestion-dlq
 ```
+
+### Ingestion (Milestone 2)
+| Component | File | Notes |
+|---|---|---|
+| Connector contract + error taxonomy | `ingestion/connectors/connector.ts` | Shared by all connectors; retryable vs permanent |
+| RSS/Atom connector | `ingestion/connectors/feed.connector.ts` | One conditional GET per run |
+| GDELT DOC 2.0 connector | `ingestion/connectors/gdelt.connector.ts` | Public, no credentials; host spacing 6 s |
+| SSRF-safe HTTP | `ingestion/safe-http.ts`, `ip-policy.ts`, `url.ts` | IP checks inside the socket DNS lookup, re-applied per redirect |
+| Feed parser | `ingestion/feed-parser.ts` | fast-xml-parser; rejects entity declarations; plain-text output |
+| Pipeline | `ingestion/pipeline.service.ts` | Fetch→validate→normalise→dedup→match→persist→(analysis)→(index)→(alerts)→metrics, all in `withTenant` |
+| Queue, gates, scheduler | `ingestion/queue.ts` | Job id = idempotency key; per-source lock, host spacing, rate/quota gates; jittered backoff; DLQ |
+| Query language | `ingestion/query.ts` | Recursive-descent parser → AST, evaluated in memory |
+| Registry, queries, mentions APIs | `ingestion/sources.*`, `queries.ts`, `mentions.ts` | Permissions: `sources:*`, `projects:*`, `mentions:read` |
+
+Data model: `sources` (registry and licence), `connectors` (kind, config, HTTP validators), `connector_credentials` (ciphertext only),
+`ingestion_schedule` (cross-tenant scheduling metadata, no content), `connector_runs` (ledger and metrics),
+`mentions` (one per tenant + canonical URL), and `mention_matches` (mention ↔ project/query).
+The scheduler reads `ingestion_schedule` in system context. Every read or write of tenant data, by API or worker, runs under that tenant's RLS context.
 
 The browser never talks to the database directly. Browser→API calls are same-origin through the Next.js rewrite
 (`/api/*`), so session cookies are first-party and `SameSite=Lax`.
@@ -55,4 +78,4 @@ audited break-glass grants (M6).
 `{ "error": { "code": "validation_failed", "message": "...", "details": [...], "requestId": "..." } }`
 
 ## Data model
-See `db/migrations`. All 21 required tables exist from M1; only identity/tenancy/projects/audit tables are exercised by M1 code.
+See `db/migrations` (0001–0006). Tables for analysis, alerts, reports and billing exist but are not yet used by application code.

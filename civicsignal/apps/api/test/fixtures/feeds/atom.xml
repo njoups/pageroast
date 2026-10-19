@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="utf-8"?>
+<feed xmlns="http://www.w3.org/2005/Atom" xml:lang="en">
+  <title type="text">Example Atom Wire</title>
+  <link rel="self" href="https://wire.example/atom.xml"/>
+  <link rel="alternate" href="https://wire.example/"/>
+  <entry>
+    <title>Ministry announces new procurement rules</title>
+    <link rel="alternate" type="text/html" href="https://wire.example/a/procurement-rules"/>
+    <link rel="enclosure" href="https://wire.example/a/procurement.jpg"/>
+    <id>tag:wire.example,2026:1</id>
+    <published>2026-10-18T22:00:00Z</published>
+    <updated>2026-10-19T01:00:00Z</updated>
+    <author><name>Wire Desk</name></author>
+    <category term="Policy"/>
+    <summary type="html">&lt;p&gt;New &lt;strong&gt;rules&lt;/strong&gt; take effect in January.&lt;/p&gt;</summary>
+  </entry>
+  <entry>
+    <title>Only updated date</title>
+    <link href="https://wire.example/a/updated-only"/>
+    <updated>2026-10-19T03:30:00+07:00</updated>
+  </entry>
+</feed>

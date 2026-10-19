@@ -1,8 +1,11 @@
-import { CanActivate, Controller, ExecutionContext, Get, Injectable, UseGuards } from '@nestjs/common';
+import { CanActivate, Controller, ExecutionContext, Get, Inject, Injectable, UseGuards } from '@nestjs/common';
+import type { Queue } from 'bullmq';
 import { ApiTags } from '@nestjs/swagger';
 import { AuditService } from './audit/audit.service';
 import { SessionGuard } from './auth/session.guard';
 import { Database } from './database/database.service';
+import { INGESTION_DLQ, INGESTION_QUEUE, REDIS } from './ingestion/ingestion-core.module';
+import { workerHeartbeats, type Redis } from './ingestion/queue';
 import { forbidden } from './common/errors';
 import { Auth, AuthContext, Meta, RequestMeta, AppRequest } from './common/request';
 
@@ -22,7 +25,18 @@ class PlatformAdminGuard implements CanActivate {
 @Controller('platform')
 @UseGuards(SessionGuard, PlatformAdminGuard)
 export class PlatformController {
-  constructor(private readonly db: Database, private readonly audit: AuditService) {}
+  constructor(private readonly db: Database, private readonly audit: AuditService,
+    @Inject(INGESTION_QUEUE) private readonly queue: Queue | null, @Inject(REDIS) private readonly redis: Redis | null,
+    @Inject(INGESTION_DLQ) private readonly dlq: Queue | null) {}
+
+  /** Global queue depth and worker liveness: operational metadata only, no tenant content. */
+  @Get('ingestion')
+  async ingestion() {
+    if (!this.queue || !this.redis) return { configured: false };
+    const counts = await this.queue.getJobCounts('waiting', 'active', 'delayed', 'failed', 'completed', 'prioritized');
+    const deadLetter = this.dlq ? await this.dlq.getJobCounts('waiting') : null;
+    return { configured: true, queue: counts, deadLetter, workers: await workerHeartbeats(this.redis) };
+  }
 
   @Get('tenants')
   tenants(@Auth() a: AuthContext, @Meta() m: RequestMeta) {

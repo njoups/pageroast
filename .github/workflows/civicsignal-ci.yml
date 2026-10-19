@@ -24,8 +24,14 @@ jobs:
         ports: ['5432:5432']
         options: >-
           --health-cmd "pg_isready -U postgres" --health-interval 5s --health-timeout 5s --health-retries 20
+      redis:
+        image: redis:7
+        ports: ['6379:6379']
+        options: >-
+          --health-cmd "redis-cli ping" --health-interval 5s --health-timeout 5s --health-retries 20
     env:
       TEST_ADMIN_DATABASE_URL: postgres://postgres:postgres@localhost:5432/postgres
+      TEST_REDIS_URL: redis://localhost:6379/15
       NEXT_TELEMETRY_DISABLED: '1'
     steps:
       - uses: actions/checkout@v4
@@ -39,7 +45,7 @@ jobs:
         run: npm run lint
       - name: Type check
         run: npm run typecheck
-      - name: Tests (unit, migrations, RLS, e2e against Postgres 16)
+      - name: Tests (unit, migrations, RLS, e2e, ingestion, queue; Postgres 16 + Redis 7)
         run: npm test
       - name: Build
         run: npm run build

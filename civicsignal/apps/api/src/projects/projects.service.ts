@@ -28,6 +28,11 @@ export class ProjectsService {
     return r.rows[0];
   }
 
+  /** For other modules: 404 unless the project exists and is visible to the caller. Returns the project row. */
+  assertVisible(c: PoolClient, auth: AuthContext, t: TenantContext, id: string, lock = false) {
+    return this.load(c, auth, t, id, lock);
+  }
+
   list(auth: AuthContext, t: TenantContext, status: 'active' | 'archived' | 'all' = 'active') {
     return this.db.withTenant(t.orgId, auth.userId, async (c) => (await c.query(
       `SELECT ${COLS}, (SELECT count(*)::int FROM project_members pm WHERE pm.project_id = p.id) AS member_count

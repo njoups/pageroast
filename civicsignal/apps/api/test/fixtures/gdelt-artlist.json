@@ -1,0 +1,6 @@
+{"articles":[
+ {"url":"https://portal.example/berita/1","url_mobile":"","title":"Synthetic GDELT item about flood relief","seendate":"20261019T081500Z","socialimage":"","domain":"portal.example","language":"Indonesian","sourcecountry":"Indonesia"},
+ {"url":"https://other.example/en/2","title":"Synthetic English item","seendate":"20261019T070000Z","domain":"other.example","language":"English","sourcecountry":"Singapore"},
+ {"url":"ftp://bad.example/3","title":"Bad scheme","seendate":"20261019T070000Z","domain":"bad.example","language":"English"},
+ {"url":"https://notitle.example/4","title":"","seendate":"20261019T070000Z","domain":"notitle.example","language":"English"}
+]}
