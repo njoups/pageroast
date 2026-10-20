@@ -12,6 +12,7 @@ import { workerHeartbeats, type Redis } from './ingestion/queue';
 import { forbidden } from './common/errors';
 import { ANALYSIS_PROVIDER, type AnalysisProvider } from './analysis/providers';
 import { ANALYSIS_QUEUE } from './analysis/analysis-queue';
+import { REPORTS_QUEUE } from './reports/reports-queue';
 import { Auth, AuthContext, Meta, RequestMeta, AppRequest } from './common/request';
 
 class PricingDto {
@@ -42,7 +43,8 @@ export class PlatformController {
     @Inject(INGESTION_QUEUE) private readonly queue: Queue | null, @Inject(REDIS) private readonly redis: Redis | null,
     @Inject(INGESTION_DLQ) private readonly dlq: Queue | null,
     @Inject(ANALYSIS_QUEUE) private readonly analysisQueue: Queue | null, @Inject(ANALYSIS_PROVIDER) private readonly provider: AnalysisProvider,
-    @Inject(ALERTS_QUEUE) private readonly alertsQueue: Queue | null, @Inject(ALERTS_DLQ) private readonly alertsDlq: Queue | null) {}
+    @Inject(ALERTS_QUEUE) private readonly alertsQueue: Queue | null, @Inject(ALERTS_DLQ) private readonly alertsDlq: Queue | null,
+    @Inject(REPORTS_QUEUE) private readonly reportsQueue: Queue | null) {}
 
   /** Alert evaluation/notification queue health: depth, lag and dead letters (no tenant content). */
   @Get('alerts')
@@ -50,6 +52,21 @@ export class PlatformController {
     if (!this.alertsQueue) return { configured: false };
     return { configured: true, queue: await queueHealth(this.alertsQueue), deadLetter: this.alertsDlq ? await this.alertsDlq.getJobCounts('waiting') : null,
       ingestion: await queueHealth(this.queue), analysis: await queueHealth(this.analysisQueue) };
+  }
+
+  /** Report generation and analytics aggregation health across tenants: counts and ages only, no tenant content. */
+  @Get('reports')
+  async reports() {
+    const db = await this.db.withSystem(async (c) => ({
+      runs: (await c.query(`SELECT status, count(*)::int AS n FROM report_runs WHERE queued_at > now() - interval '1 day' GROUP BY 1`)).rows,
+      oldestQueuedSeconds: Number((await c.query(`SELECT coalesce(extract(epoch FROM now() - min(queued_at)), 0)::int AS s FROM report_runs WHERE status = 'queued'`)).rows[0].s),
+      durationP50Seconds: (await c.query(`SELECT percentile_cont(0.5) WITHIN GROUP (ORDER BY extract(epoch FROM finished_at - started_at)) AS p FROM report_runs
+        WHERE status = 'succeeded' AND finished_at > now() - interval '1 day'`)).rows[0].p,
+      failingSchedules: Number((await c.query(`SELECT count(*)::int AS n FROM report_schedules WHERE is_active AND consecutive_failures >= 3`)).rows[0].n),
+      artifactsStored: (await c.query(`SELECT count(*)::int AS n, coalesce(sum(size_bytes), 0)::bigint AS bytes FROM report_artifacts WHERE data IS NOT NULL`)).rows[0],
+      analytics: (await c.query(`SELECT count(*)::int AS tenants, min(refreshed_at) AS oldest_refresh, max(refreshed_at) AS newest_refresh FROM analytics_state`)).rows[0],
+    }));
+    return { configured: !!this.reportsQueue, queue: await queueHealth(this.reportsQueue), ...db };
   }
 
   /** AI provider configuration (never the key) and analysis queue depth. */

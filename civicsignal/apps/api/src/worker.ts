@@ -18,14 +18,17 @@ import { AlertsCoreModule, AlertsEnqueuer, alertsSchedulerTick, createAlertsWork
 import { EvaluatorService } from './alerts/evaluator.service';
 import { IssueSummaryService } from './alerts/issue-summary.service';
 import { NotificationService } from './alerts/notifications.service';
+import { CLOCK, type Clock } from './alerts/clock';
+import { ReportGenerator } from './reports/generator.service';
+import { analyticsRefreshTick, createReportsWorker, ReportsCoreModule, ReportsEnqueuer, reportsSchedulerTick } from './reports/reports-queue';
 
-@Module({ imports: [DatabaseModule, IngestionCoreModule, AlertsCoreModule] })
+@Module({ imports: [DatabaseModule, IngestionCoreModule, AlertsCoreModule, ReportsCoreModule] })
 class WorkerModule {}
 
 /**
  * Ingestion worker: runs the BullMQ consumer, the DB-driven scheduler and a heartbeat.
  *   REDIS_URL=… DATABASE_URL=… node dist/worker.js        (or: npm run worker -w apps/api)
- * Flags: --no-scheduler (consumer only), --no-consumer (scheduler only).
+ * Flags: --no-scheduler (consumer only), --no-consumer (scheduler only), --no-analysis, --no-alerts, --no-reports.
  */
 async function main() {
   const ctx = await NestFactory.createApplicationContext(WorkerModule, { logger: ['error', 'warn'] });
@@ -50,6 +53,8 @@ async function main() {
   const alertsWorker = runConsumer && !process.argv.includes('--no-alerts')
     ? createAlertsWorker({ config, evaluator: ctx.get(EvaluatorService), notifications: ctx.get(NotificationService), summaries: ctx.get(IssueSummaryService), enqueuer: alertsEnqueuer })
     : null;
+  const generator = ctx.get(ReportGenerator); const reportsEnqueuer = ctx.get(ReportsEnqueuer); const clock = ctx.get<Clock>(CLOCK);
+  const reportsWorker = runConsumer && !process.argv.includes('--no-reports') ? createReportsWorker({ config, generator }) : null;
   logEvent('info', 'alerts.channels', ctx.get(NotificationService).channelStatus());
   logEvent('info', 'analysis.provider', { provider: provider.name, model: provider.model, method: provider.method });
   const beat = () => redis.set(`${KEY_PREFIX}:worker:heartbeat:${id}`, JSON.stringify({ at: new Date().toISOString(), consumer: runConsumer, scheduler: runScheduler }), 'EX', 60);
@@ -67,6 +72,23 @@ async function main() {
     try { await alertsSchedulerTick(db, alertsEnqueuer); } catch (e) { logEvent('error', 'alerts.scheduler_error', { message: (e as Error).message }); } finally { alertsTicking = false; }
   };
   const alertsScheduler = runScheduler ? setInterval(() => void alertsTick(), config.alerts.evaluateIntervalMs) : null;
+  // Analytics aggregation and report scheduling (each guarded against overlapping runs).
+  let analyticsTicking = false;
+  const analyticsTick = async () => {
+    if (analyticsTicking) return; analyticsTicking = true;
+    try { await analyticsRefreshTick(db, clock); } catch (e) { logEvent('error', 'analytics.scheduler_error', { message: (e as Error).message }); } finally { analyticsTicking = false; }
+  };
+  let reportsTicking = false;
+  const reportsTick = async () => {
+    if (reportsTicking) return; reportsTicking = true;
+    try {
+      const r = await reportsSchedulerTick(db, reportsEnqueuer, generator, config, clock);
+      if (r.created || r.abandoned || r.expired) logEvent('info', 'reports.scheduler', r);
+    } catch (e) { logEvent('error', 'reports.scheduler_error', { message: (e as Error).message }); } finally { reportsTicking = false; }
+  };
+  const analyticsScheduler = runScheduler ? setInterval(() => void analyticsTick(), config.analytics.refreshIntervalMs) : null;
+  const reportsScheduler = runScheduler ? setInterval(() => void reportsTick(), 60_000) : null;
+  if (runScheduler) { void analyticsTick(); void reportsTick(); }
   if (runScheduler) void alertsTick();
   if (runScheduler) void tick();
   logEvent('info', 'ingestion.worker_started', { id, consumer: runConsumer, scheduler: runScheduler, concurrency: config.ingestion.workerConcurrency });
@@ -75,10 +97,13 @@ async function main() {
     logEvent('info', 'ingestion.worker_stopping', { id, signal });
     if (scheduler) clearInterval(scheduler);
     if (alertsScheduler) clearInterval(alertsScheduler);
+    if (analyticsScheduler) clearInterval(analyticsScheduler);
+    if (reportsScheduler) clearInterval(reportsScheduler);
     clearInterval(heartbeat);
     await consumer?.worker.close();   // waits for in-flight jobs
     await analysisWorker?.close();
     await alertsWorker?.worker.close();
+    await reportsWorker?.close();
     await alertsWorker?.dlq.close();
     await consumer?.dlq.close();
     consumer?.redis.disconnect();

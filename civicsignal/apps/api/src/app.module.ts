@@ -1,6 +1,9 @@
 import { Module } from '@nestjs/common';
 import { AnalysisApiService, AnalysisController } from './analysis/analysis-api';
 import { AlertsCoreModule } from './alerts/alerts-queue';
+import { AnalyticsController, AnalyticsService } from './analytics/analytics-api';
+import { ReportsController, ReportsService } from './reports/reports-api';
+import { ReportsCoreModule } from './reports/reports-queue';
 import { IssuesController, IssuesService } from './alerts/issues-api';
 import { AlertRulesController, RulesService } from './alerts/rules-api';
 import { AuditController } from './audit/audit.controller';
@@ -25,13 +28,13 @@ import { ProjectsController } from './projects/projects.controller';
 import { ProjectsService } from './projects/projects.service';
 
 @Module({
-  imports: [DatabaseModule, IngestionCoreModule, AlertsCoreModule],
+  imports: [DatabaseModule, IngestionCoreModule, AlertsCoreModule, ReportsCoreModule],
   controllers: [AuthController, OrganizationsController, InvitationsController, ProjectsController, AuditController, HealthController, PlatformController,
-    SourcesController, QueriesController, MentionsController, AnalysisController, IssuesController, AlertRulesController],
+    SourcesController, QueriesController, MentionsController, AnalysisController, IssuesController, AlertRulesController, AnalyticsController, ReportsController],
   providers: [
     { provide: IDENTITY_PROVIDER, useClass: LocalIdentityProvider },
     AuditService, OrganizationsService, ProjectsService, SessionGuard, TenantGuard, RateLimitGuard, FailureThrottle,
-    SourcesService, QueriesService, MentionsService, AnalysisApiService, IssuesService, RulesService,
+    SourcesService, QueriesService, MentionsService, AnalysisApiService, IssuesService, RulesService, AnalyticsService, ReportsService,
   ],
 })
 export class AppModule {}

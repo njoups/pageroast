@@ -62,6 +62,21 @@ export interface AppConfig {
     webhookAllowHttp: boolean;         // tests only; refused in production
     collectionStaleHours: number;
   };
+  analytics: {
+    refreshIntervalMs: number;         // incremental aggregation cadence (worker scheduler)
+    cacheTtlSeconds: number;           // analytics_cache entry lifetime (entries are also invalidated by data changes)
+    maxPeriodDays: number;             // longest period an analytics query or report may cover
+  };
+  reports: {
+    artifactTtlDays: number;           // generated files are deleted after this (metadata kept)
+    runsPerDay: number;                // per tenant, manual + scheduled
+    concurrentRuns: number;            // per tenant, queued + running
+    csvRowLimit: number;               // rows per CSV export
+    attempts: number;                  // generation attempts before a run fails
+    staleRunMinutes: number;           // a running job without heartbeat for this long is failed (abandoned)
+    queuedTimeoutMinutes: number;      // a run still queued after this long is cancelled
+    aiCommentaryTokens: number;        // max output tokens for optional AI commentary per report
+  };
   email: { smtpUrl: string | null; from: string | null };
   whatsapp: { accessToken: string | null; phoneNumberId: string | null; templateName: string | null; templateLanguage: string; apiBaseUrl: string };
 }
@@ -142,6 +157,21 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
       webhookTimeoutMs: Number(env.ALERTS_WEBHOOK_TIMEOUT_MS || 10_000),
       webhookAllowHttp: env.ALERTS_WEBHOOK_ALLOW_HTTP === 'true',
       collectionStaleHours: Number(env.ALERTS_COLLECTION_STALE_HOURS || 6),
+    },
+    analytics: {
+      refreshIntervalMs: Number(env.ANALYTICS_REFRESH_INTERVAL_MS || 120_000),
+      cacheTtlSeconds: Number(env.ANALYTICS_CACHE_TTL_SECONDS || 900),
+      maxPeriodDays: Number(env.ANALYTICS_MAX_PERIOD_DAYS || 366),
+    },
+    reports: {
+      artifactTtlDays: Number(env.REPORT_ARTIFACT_TTL_DAYS || 30),
+      runsPerDay: Number(env.REPORT_RUNS_PER_DAY || 50),
+      concurrentRuns: Number(env.REPORT_CONCURRENT_RUNS || 3),
+      csvRowLimit: Number(env.REPORT_CSV_ROW_LIMIT || 5000),
+      attempts: Number(env.REPORT_ATTEMPTS || 3),
+      staleRunMinutes: Number(env.REPORT_STALE_RUN_MINUTES || 15),
+      queuedTimeoutMinutes: Number(env.REPORT_QUEUED_TIMEOUT_MINUTES || 120),
+      aiCommentaryTokens: Number(env.REPORT_AI_COMMENTARY_TOKENS || 1200),
     },
     email: { smtpUrl: env.SMTP_URL || null, from: env.EMAIL_FROM || null },
     whatsapp: {

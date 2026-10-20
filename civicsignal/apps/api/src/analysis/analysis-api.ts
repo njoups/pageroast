@@ -327,13 +327,7 @@ export class AnalysisController {
   @Post('analysis/backfill') @HttpCode(202) @RequirePermission('analysis:reprocess')
   backfill(@Auth() a: AuthContext, @Tenant() t: TenantContext, @Body() dto: BackfillDto, @Meta() m: RequestMeta) { return this.svc.backfill(a, t, dto, m); }
 
-  @Get('analytics/sentiment') @RequirePermission('mentions:read')
-  sentiment(@Auth() a: AuthContext, @Tenant() t: TenantContext, @Query() f: AnalyticsFilter) { return this.svc.sentiment(a, t, f); }
-  @Get('analytics/topics') @RequirePermission('mentions:read')
-  topics(@Auth() a: AuthContext, @Tenant() t: TenantContext, @Query() f: AnalyticsFilter) { return this.svc.topics(a, t, f); }
-  @Get('analytics/entities') @RequirePermission('mentions:read')
-  entities(@Auth() a: AuthContext, @Tenant() t: TenantContext, @Query() f: LimitQuery) { return this.svc.entities(a, t, f, f.limit); }
-
+  // Organization-wide analytics moved to AnalyticsController (analytics/*) in Milestone 5; these project-scoped views remain.
   @Get('projects/:projectId/sentiment') @RequirePermission('mentions:read')
   pSentiment(@Auth() a: AuthContext, @Tenant() t: TenantContext, @Param('projectId', ParseUUIDPipe) p: string, @Query() f: AnalyticsFilter) { return this.svc.sentiment(a, t, { ...f, projectId: p }); }
   @Get('projects/:projectId/topics') @RequirePermission('mentions:read')
