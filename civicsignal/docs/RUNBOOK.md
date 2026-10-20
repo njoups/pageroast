@@ -7,7 +7,7 @@ repository root; `$OWNER` is the migration/owner connection string.
 | Process | Command | Notes |
 |---|---|---|
 | API | `node apps/api/dist/main.js` | Stateless; scale horizontally |
-| Worker | `node apps/api/dist/worker.js` | Runs ingestion, analysis and alert consumers, plus the schedulers. Flags: `--no-scheduler`, `--no-consumer`, `--no-analysis`, `--no-alerts` |
+| Worker | `node apps/api/dist/worker.js` | Runs ingestion, analysis, alert and report consumers, plus the schedulers (collection, alerts, analytics aggregation, reports). Flags: `--no-scheduler`, `--no-consumer`, `--no-analysis`, `--no-alerts`, `--no-reports` |
 | Web | `next start` | |
 
 - **One scheduler is enough.** Run more than one and the per-bucket job ids and `SKIP LOCKED` scheduling prevent duplicates.
@@ -19,11 +19,14 @@ repository root; `$OWNER` is the migration/owner connection string.
 | `ingestion` | collection runs | `ingestion-dlq` |
 | `analysis` | record analysis, summaries | failed analyses are recorded in `mention_analyses` |
 | `alerts` | `evaluate` (per tenant per 5-minute bucket), `deliver`, `webhook`, `issue_summary` | `alerts-dlq` |
+| `reports` | `generate` (one per run attempt) | failures are recorded on the run (`report_runs.status = failed`) |
 
 Platform admins can monitor all of this without seeing tenant content:
 - `GET /api/v1/platform/alerts`: depth, `lagSeconds` (age of the oldest waiting job) and dead letters, for the alerts,
   ingestion and analysis queues.
 - `GET /api/v1/platform/ingestion`: worker heartbeats.
+- `GET /api/v1/platform/reports`: report queue depth/lag, run status counts (24 h), oldest queued run, median duration,
+  schedules failing 3+ times in a row, stored artifact volume, oldest/newest analytics refresh.
 
 Alert on `lagSeconds > 600` for `alerts`, or a growing `alerts-dlq`.
 
@@ -70,7 +73,43 @@ Structured logs (JSON, one per line) include `alerts.evaluated`, `alerts.deliver
 - **Tune it:** raise `minMentions`, `relativeChange` or `severity.minimum`, or lengthen `cooldownMinutes`. Use "Dry run" to
   see the effect on current data before saving. Every save creates a new version.
 
-## Rebuilding aggregates
+## Report scheduling
+How it works: every minute the worker scheduler takes due schedules (`FOR UPDATE SKIP LOCKED`) and creates **one run per
+(schedule, period)**. The idempotency key is `scheduleId:periodStart`, so repeated ticks, restarts or two schedulers never
+duplicate a report. The period is the previous complete daily, weekly (Mon–Sun), monthly or N-day period **in the
+schedule's time zone**, derived from the scheduled time, not from the time the tick happened. A late tick reports the same
+period. Missed occurrences during an outage are not back-filled; the next run is computed from now. Use manual generation
+with a custom period to fill gaps.
+
+Delivery: in-app to each recipient, and email if enabled. Emails contain only the report name, period and a link that requires
+sign-in, never the file or figures. Recipients are re-validated at delivery: they must be active members whose role has
+`reports:read` and who can access the project. Others are recorded as `suppressed`. Without SMTP, email deliveries are
+recorded as `unconfigured`, never as sent.
+
+| Symptom | Check | Action |
+|---|---|---|
+| Report stuck in *Queued* | `GET /platform/reports` → queue lag; worker heartbeat | Start the worker (`REDIS_URL` set). Queued runs without a live job are re-queued automatically after 2 minutes; runs still queued after `REPORT_QUEUED_TIMEOUT_MINUTES` (120) are cancelled with that reason |
+| Report stuck in *Generating* | `heartbeat_at` on the run | The sweep fails runs whose heartbeat is older than `REPORT_STALE_RUN_MINUTES` (15) as "Abandoned"; the requester and definition owner get a failure notice. Generate again |
+| Run *Failed: Metric consistency check failed* | The error lists the mismatching totals | Usually data changing mid-run or a damaged aggregate: wait for the next aggregation refresh (2 min) and generate again. If it repeats, rebuild aggregates (below) and report the defect |
+| Run *Failed: Reference validation failed* | A cited record left the project (query edit, deletion) during generation | Generate again |
+| Run *Failed: Daily report quota reached* | `REPORT_RUNS_PER_DAY` | Raise the limit or wait 24 h |
+| Schedule shows "n failed in a row" | Run errors in the history | Fix the cause; the counter resets on the next success |
+| Email not received | Run detail → "my deliveries"; `report_deliveries.status/error` | `unconfigured`: set `SMTP_URL`/`EMAIL_FROM`. `suppressed`: the recipient lost project access or report permission. `failed`: SMTP error shown |
+| Download returns 410 | `report_artifacts.expires_at` | Files expire after `REPORT_ARTIFACT_TTL_DAYS` (30); generate again |
+
+Editing a schedule recomputes `next_run_at`. Cancelling is final (create a new schedule to resume); pausing (`isActive:false`) is reversible.
+Deleting a report definition cancels its schedules; generated reports stay in the history until their files expire.
+
+Structured logs: `reports.scheduler`, `reports.scheduler_error`, `reports.run_failed`, `reports.ai_commentary_failed`,
+`reports.ai_quota_reached`, `reports.worker_error`, `analytics.refresh_failed`, `analytics.scheduler_error`.
+
+## Analytics aggregates
+`analytics_hourly` is refreshed incrementally every `ANALYTICS_REFRESH_INTERVAL_MS` (2 min) and fully once a day per tenant.
+To force a full rebuild for a tenant (as owner): `UPDATE analytics_state SET full_rebuild_at = NULL WHERE tenant_id = '…';`
+The next refresh rebuilds every hour and bumps the data version, which invalidates cached analytics. Dashboard timelines fall
+back to base tables automatically whenever the aggregate is behind or does not add up, so a stale aggregate never shows wrong numbers.
+
+## Rebuilding alert aggregates
 `activity_hourly` and `topic_activity_daily` are recomputed for the last `ALERTS_REFRESH_HOURS` (48) at each evaluation.
 To rebuild a longer history (for example after a backfill), raise `ALERTS_REFRESH_HOURS` temporarily and restart the worker.
 The delete-and-insert is per tenant and idempotent.

@@ -18,6 +18,23 @@ Browser ─HTTPS─> Caddy edge ─> Next.js (apps/web) ─same-origin proxy─>
                                                                     PostgreSQL (RLS)
 ```
 
+### Analytics and reporting (Milestone 5)
+```
+worker scheduler ─every 2 min─▶ refreshAnalytics(tenant): watermarks → touched hours → analytics_hourly (delete+insert) → data_version++
+                 ─every 60 s──▶ reportsSchedulerTick: due schedules → report_runs (idempotency key schedule:period) → "reports" queue
+                                 + re-queue orphaned runs, fail abandoned runs, delete expired artifact bytes
+
+API analytics/* ─▶ resolveScope (visible projects, tenant time zone, half-open period) ─▶ analytics_cache (key: metric+filters+projects+period;
+                   valid while data stamp unchanged and not expired) ─▶ engine (indexed base-table SQL; hourly aggregate for timelines when exact)
+
+"reports" job ─▶ ReportGenerator: scope → metrics (same engine, one snapshot) → evidence selection → optional AI commentary
+                 (sanitise + validateCommentary) → reference + consistency checks → PDF (pdfkit) / CSV → artifacts, cited sources,
+                 deliveries (in-app; email = link only), audit
+```
+Analytics run in the same PostgreSQL database; there is no separate analytics store. Expensive work (aggregation and report
+rendering) runs in the worker. API requests use indexed, bounded queries and the cache. No query loads all records into memory:
+counts, distinct counts, percentiles and timelines are all computed in SQL.
+
 ### Issue detection and alerting (Milestone 4)
 ```
 analysis done ─▶ alerts queue "evaluate" (per tenant, 5-min bucket) ◀─ scheduler (every 60 s; tenants with active rules)
@@ -94,6 +111,8 @@ The browser never talks to the database directly. Browser→API calls are same-o
 | `audit` | Append-only audit writer and viewer |
 | `authz` | Role → permission matrix, `@RequirePermission()` guard |
 | `health` | Liveness/readiness |
+| `analytics` | Analytics engine (coverage, sentiment, share of voice, sources, topics, entities, issues, overview), hourly aggregation, cache, time-zone math |
+| `reports` | Report definitions, templates, generator (evidence workflow), PDF/CSV renderers, schedules, queue + scheduler, downloads |
 
 ## Tenant isolation (defence in depth)
 1. **Database (authoritative):** every tenant-owned table has `tenant_id`, `ENABLE` + `FORCE ROW LEVEL SECURITY`, and a

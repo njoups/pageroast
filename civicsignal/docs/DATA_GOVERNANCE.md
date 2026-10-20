@@ -54,9 +54,29 @@
   never sent. Provider data-handling and cross-border transfer need legal review (open item below).
 - **History.** Re-analysis creates a new analysis; earlier results are kept. Cluster membership changes and usage records are append-only.
 
+## Analytics and report controls (implemented in Milestone 5)
+- **Deterministic figures only.** Every metric in dashboards and reports is computed in SQL from stored records. Language
+  models never produce numbers. Optional AI commentary must cite the report's records, may only use the report's own metric
+  values or numbers present in those records, and must not state causes, public opinion, effectiveness or forecasts. It is
+  labelled as interpretation.
+- **Typed statements.** Reports mark each paragraph as a calculated metric, an observed source fact, an AI interpretation or an
+  analyst recommendation, and list methodology and limitations.
+- **No profiling.** Analytics aggregate coverage by publisher, topic and named entity as reported in the media. Nothing scores
+  or profiles citizens or individuals, and nothing measures public opinion.
+- **Licence-aware exports.** PDFs contain headlines, publishers, dates and links only. CSV exports always contain title and URL.
+  They contain the excerpt only when the source permits the `excerpt` field and has no redistribution restriction, and never
+  the article body. Each omission is explained in an `excerpt_omitted_reason` column.
+- **Access.** Reports follow project access. Downloads require authentication and are audited; there are no public links.
+  Emails carry a link, never the file or figures. Recipients are re-checked at every delivery.
+- **Retention.** Report files are deleted after `REPORT_ARTIFACT_TTL_DAYS` (default 30), keeping metadata and checksums. The run
+  record (model, metrics, cited record ids) remains as history. Analytics cache entries expire after 15 minutes and are purged
+  hourly.
+
 ## Retention
 `retention_policies` stores per-tenant, per-data-class retention. Defaults are conservative; enforcement jobs arrive in M6.
 Retention may be shortened by a source licence but never lengthened beyond it.
+Report runs keep the ids of cited records. When record retention is enforced (M6), deleting a record also removes it from
+`report_run_sources` (cascade); the stored report model keeps only the headline, publisher and URL it quoted.
 
 ## Source licence registry
 The `sources` table (with `connectors`) is the registry. No source is seeded. Operators enter the authorization basis.

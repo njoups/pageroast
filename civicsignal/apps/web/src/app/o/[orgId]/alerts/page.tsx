@@ -36,14 +36,14 @@ export default function AlertsDashboard() {
   const [projects, setProjects] = useState<Project[]>([]);
   const [sources, setSources] = useState<Source[]>([]);
   const [members, setMembers] = useState<Member[]>([]);
-  const [entities, setEntities] = useState<Array<{ id: string; display_name: string }>>([]);
+  const [entities, setEntities] = useState<Array<{ id: string; name?: string }>>([]);
   const base = `/organizations/${org.id}`;
 
   useEffect(() => {
     api<Project[]>(`${base}/projects`).then(setProjects).catch(() => undefined);
     api<Source[]>(`${base}/sources`).then(setSources).catch(() => undefined);
     api<Member[]>(`${base}/members`).then(setMembers).catch(() => undefined);
-    api<{ entities: Array<{ id: string; display_name: string }> }>(`${base}/analytics/entities?limit=50`).then((r) => setEntities(r.entities)).catch(() => undefined);
+    api<{ entities: Array<{ id: string; name?: string }> }>(`${base}/analytics/entities?days=366&limit=100`).then((r) => setEntities(r.entities)).catch(() => undefined);
   }, [base]);
 
   const qs = useCallback((extra: Record<string, string> = {}) => {
@@ -95,7 +95,7 @@ export default function AlertsDashboard() {
         <div><label className="label" htmlFor="projectId">Project</label>
           <select id="projectId" className="input" value={f.projectId} onChange={set('projectId')}><option value="">All visible</option>{projects.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}</select></div>
         <div><label className="label" htmlFor="entityId">Institution / entity</label>
-          <select id="entityId" className="input max-w-48" value={f.entityId} onChange={set('entityId')}><option value="">Any</option>{entities.map((e) => <option key={e.id} value={e.id}>{e.display_name}</option>)}</select></div>
+          <select id="entityId" className="input max-w-48" value={f.entityId} onChange={set('entityId')}><option value="">Any</option>{entities.map((e) => <option key={e.id} value={e.id}>{e.name}</option>)}</select></div>
         <div><label className="label" htmlFor="topic">Topic</label>
           <select id="topic" className="input" value={f.topic} onChange={set('topic')}><option value="">Any</option>{Object.entries(TOPIC_LABEL).filter(([k]) => k !== 'unknown').map(([k, v]) => <option key={k} value={k}>{v}</option>)}</select></div>
         <div><label className="label" htmlFor="severity">Severity</label>

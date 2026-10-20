@@ -3,12 +3,14 @@
 Multi-tenant media monitoring and public-issue intelligence platform (Indonesia-first).
 **Status:** Milestones 1 (foundation), 2 (news ingestion: RSS/Atom verified live, GDELT implemented but not verified live) and
 3 (AI intelligence: analysis pipeline, stories, summaries, analytics) and 4 (issue detection and alerting: explainable rules, severity,
-lifecycle, in-app/email/webhook notifications) are done. Without `ANTHROPIC_API_KEY`, analysis uses a
+lifecycle, in-app/email/webhook notifications) and 5 (analytics and executive reporting: dashboard, five report templates, PDF/CSV,
+scheduling) are done. Without `ANTHROPIC_API_KEY`, analysis uses a
 rule-based baseline, labelled as such, whose tone estimates are weak; the AI-model adapter has not yet been verified against the
-live API. Email has been verified against a local SMTP server only; WhatsApp is an unconfigured adapter. Reports are not built yet.
+live API. Email has been verified against a local SMTP server only; WhatsApp is an unconfigured adapter.
 Current, evidence-based status: [docs/IMPLEMENTATION_STATUS.md](docs/IMPLEMENTATION_STATUS.md). Connectors: [docs/CONNECTORS.md](docs/CONNECTORS.md).
 
 - Plan and milestone status: [docs/IMPLEMENTATION_PLAN.md](docs/IMPLEMENTATION_PLAN.md)
+- Analytics and reports: [docs/ANALYTICS_METHODOLOGY.md](docs/ANALYTICS_METHODOLOGY.md) · [docs/REPORT_TEMPLATES.md](docs/REPORT_TEMPLATES.md)
 - Alerts: [docs/ALERT_RULES.md](docs/ALERT_RULES.md) · [docs/NOTIFICATIONS.md](docs/NOTIFICATIONS.md) · Operations: [docs/RUNBOOK.md](docs/RUNBOOK.md)
 - AI: [docs/AI_PROVIDERS.md](docs/AI_PROVIDERS.md) (configuration) · [docs/AI_EVALUATION.md](docs/AI_EVALUATION.md) (measured quality and limits)
 - Architecture: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) · Security: [docs/SECURITY.md](docs/SECURITY.md) · Data governance: [docs/DATA_GOVERNANCE.md](docs/DATA_GOVERNANCE.md)
@@ -35,7 +37,7 @@ cd apps/api
 DATABASE_URL=postgres://civicsignal_app:<choose-one>@localhost:5432/civicsignal \
 MIGRATION_DATABASE_URL=$MIGRATION_DATABASE_URL npm run dev
 
-# Terminal 2 — worker: ingestion, AI analysis, issue detection and notifications (add SMTP_URL/EMAIL_FROM for email). Add ANTHROPIC_API_KEY=... to use an AI model.
+# Terminal 2 — worker: ingestion, AI analysis, issue detection, notifications, analytics aggregation and reports (add SMTP_URL/EMAIL_FROM for email). Add ANTHROPIC_API_KEY=... to use an AI model.
 cd apps/api
 DATABASE_URL=postgres://civicsignal_app:<choose-one>@localhost:5432/civicsignal REDIS_URL=redis://localhost:6379/0 npm run worker
 

@@ -75,7 +75,6 @@ export interface AppConfig {
     attempts: number;                  // generation attempts before a run fails
     staleRunMinutes: number;           // a running job without heartbeat for this long is failed (abandoned)
     queuedTimeoutMinutes: number;      // a run still queued after this long is cancelled
-    aiCommentaryTokens: number;        // max output tokens for optional AI commentary per report
   };
   email: { smtpUrl: string | null; from: string | null };
   whatsapp: { accessToken: string | null; phoneNumberId: string | null; templateName: string | null; templateLanguage: string; apiBaseUrl: string };
@@ -171,7 +170,6 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
       attempts: Number(env.REPORT_ATTEMPTS || 3),
       staleRunMinutes: Number(env.REPORT_STALE_RUN_MINUTES || 15),
       queuedTimeoutMinutes: Number(env.REPORT_QUEUED_TIMEOUT_MINUTES || 120),
-      aiCommentaryTokens: Number(env.REPORT_AI_COMMENTARY_TOKENS || 1200),
     },
     email: { smtpUrl: env.SMTP_URL || null, from: env.EMAIL_FROM || null },
     whatsapp: {

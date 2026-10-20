@@ -1,6 +1,6 @@
 # Implementation Status
 
-Last verified: 2026-10-19, from code, test runs and live collection (not from plans). Commands and results are at the bottom.
+Last verified: 2026-10-20, from code, test runs and live collection (not from plans). Commands and results are at the bottom.
 
 ## Completed and verified
 
@@ -78,7 +78,32 @@ Last verified: 2026-10-19, from code, test runs and live collection (not from pl
 | Dashboard: high-priority issues, counts, volume chart with baseline and gaps, tone chart, emerging topics, timeline, related stories, collection freshness, filters (project, entity, topic, severity, source, date range, status, assignee); issue detail; rule editor with dry run; notifications; admin delivery log/webhooks | browser smoke on live data, no console errors |
 | **Live:** 58 new real records collected (ANTARA, CNN Indonesia), analysed, evaluated by 6 rules: 1 high-severity keyword issue (29 records, 2 publishers) with in-app and email notification; volume/emerging rules suppressed (no baseline yet), tone rule suppressed (baseline tone 100% uncertain), story/concentration detections below the rules' severity minimum | dev database, mail sink |
 
+### Milestone 5: analytics and executive reporting (verified 2026-10-20 on live data; AI commentary not verified with a live model)
+| Area | Evidence |
+|---|---|
+| Migration 0009 (replaces the unused placeholder report tables, guarded against data loss): hourly analytics aggregate + per-tenant data version and watermarks, analytics cache, report definitions/schedules/runs/cited sources/artifacts/deliveries; new period indexes; 57/57 tables with forced RLS; cited sources append-only, runs not deletable by the app role | migrations spec, dev DB |
+| Analytics engine: coverage (records vs unique articles vs publishers vs story clusters, previous period, rolling 1/7/30-day comparisons, local-time timelines), sentiment (unknown/unanalysed counted, excluded from denominators, by topic/entity/publisher, confidence + method, limitations), share of voice (documented formula, configurable group, co-mentions, warnings, no reach estimates), sources (share, active days, lag, Simpson diversity, topics, tone), topics/entities (emerging, trends, co-occurrence, issue associations), issues | `reports.e2e.ts` (exact expected values on fixtures), live API |
+| Half-open periods, tenant time zone (bucket shift verified by switching the org to UTC), DST-safe local-midnight conversion, maximum period, duplicates excluded | unit `tz-metrics.spec.ts`, e2e |
+| Incremental hourly aggregation (watermarks, daily full rebuild) in the worker; aggregate used for timelines only when exact and current, with a self-check against base totals | e2e (aggregate = base; stale and deleted cases fall back), live (42 hourly rows = 53 project memberships of 50 matched records) |
+| Cache keyed by metric, filters, visible projects and period; invalidated by new data (data stamp) and by the data version; freshness never cached | e2e |
+| Tenant and project isolation: other tenant's records never counted, unassigned members 404 on the project and see 0, report viewers have no analytics access | e2e |
+| Executive dashboard: KPIs (articles, records, publishers, net tone, high-priority issues, active sources), coverage timeline, tone, share of voice, top issues, trending topics, top topics, entity comparison, freshness & connector health, active sources; filters for period/custom dates (tenant tz), project, entity, topic, source, language, tone, issue status, SoV group; per-widget title, metric definition, period, loading/empty/error states, accessible charts with tooltips and table views | browser smoke on live data (tooltip, table view, filtered view), no console errors |
+| Five versioned templates (daily, weekly, monthly, issue, policy) in Indonesian and English; typed paragraphs (metric / source fact / AI interpretation / analyst recommendation / note); no causal, opinion or effectiveness wording in template text | unit (all templates × both languages), **live: all five generated on real data** |
+| Evidence workflow with reference validation and metric-consistency checks (fail rather than render) | unit + e2e; consistency check caught a real aggregate staleness bug during development (fixed) |
+| Optional AI commentary: sanitised refs + `validateCommentary` (unsupported numbers, causal, public-opinion, effectiveness, forecast, unverified quotations), token usage recorded, tenant token limit respected; "unavailable" stated with the baseline | unit (12 cases), e2e with the test provider (4 of 5 claims dropped for the right reasons) |
+| PDF (cover, hierarchy, KPI tiles, tables, vector charts, numbered sources, page x/y, timestamp, period, attribution, methodology, limitations; Liberation fonts) and CSV (stable columns, quoting, CRLF/BOM, ISO timestamps, formula neutralisation, licence-aware excerpts, bodies never exported, row limit) | unit, e2e, live downloads inspected (rendered pages reviewed) |
+| Authenticated downloads only (project access + reports:read, audited, safe headers, sanitised filenames), expiry → 410 with metadata kept | e2e |
+| Schedules: daily/weekly/monthly/custom in the schedule time zone, idempotent per (schedule, period), no back-fill, recipients validated at creation and re-checked at delivery, in-app + link-only email (unconfigured recorded honestly), edit/pause/cancel, failure notices, consecutive-failure count | e2e (controllable clock) |
+| Reliability: retries (transient failures re-queued, final failure visible), abandoned-run sweep, long-queued cancellation, orphan re-queue, per-tenant daily/concurrent quotas, platform report health endpoint | e2e, `GET /platform/reports` |
+| **Live:** migration applied to the dev DB (211 real records preserved); 8 reports generated from the 50 matched records (CNN Indonesia, ANTARA); AI commentary reported as unavailable (baseline provider) | dev database |
+
 ## Partially implemented
+- **AI report commentary:** implemented and tested with the deterministic test provider only. No API key was available, so it has
+  **not** run against a live model. With the baseline provider, reports say that AI commentary is unavailable.
+- **Report email delivery:** reuses the SMTP channel (link only). Verified in tests as recorded `unconfigured`; the alert email path was
+  verified against a local SMTP server in Milestone 4. No third-party provider has been tested.
+- **Deleted records and the analytics cache:** a deletion does not change the data stamp, so a cached response can include a deleted
+  record for up to 15 minutes (or until the next full rebuild). Timelines are protected by the aggregate self-check.
 - **GDELT connector:** implemented and contract-tested. **Not verified live**: every attempt from this environment returned
   429/503 (shared egress IP). Health shows it honestly as failing.
 - **Second *licensed* connector:** none. No commercial provider or publisher API is contracted. Encrypted credential storage
@@ -93,7 +118,6 @@ Last verified: 2026-10-19, from code, test runs and live collection (not from pl
   emerging-topic and tone rules stay suppressed on a fresh deployment. Tone rules stay suppressed while tone comes from the baseline method.
 - **Regional anomaly detection:** not implemented (no reliable geographic metadata; see ALERT_RULES.md).
 - **Source reliability** is not scored (no reliability metadata yet); recorded as such in every severity breakdown.
-- **Analytics page** (Milestone 3) still computes on read; the alert dashboard uses the new aggregates.
 - **Summaries on headline-only sources:** live sources permit headlines only, so mention summaries are mostly "insufficient evidence"
   and cluster/project summaries are extractive (quotes and counts).
 - **Retention:** expiry is computed per record, but nothing deletes expired records yet (Milestone 6).
@@ -104,7 +128,7 @@ Last verified: 2026-10-19, from code, test runs and live collection (not from pl
 - **Conditional GET:** a 304 has been verified only against the local test server. Live feeds changed every minute or sent no ETag.
 
 ## Missing
-Reports, entity/summary/clustering quality evaluation, analyst annotations (UI area reserved; no storage yet), billing/metering enforcement, retention jobs,
+Entity/summary/clustering quality evaluation, report branding beyond colour (logo upload), PDF/UA tagging (accessible PDF structure), analyst annotations (UI area reserved; no storage yet), billing/metering enforcement, retention jobs,
 export/deletion workflows, break-glass support access, social connectors, licensed-provider connector.
 
 ## Broken
@@ -149,6 +173,18 @@ None known. All automated tests pass (see bottom).
 | Low | Disabled sources flagged as stale on the freshness panel | Only enabled sources can be stale |
 | Medium (config) | Docker Compose did not pass AI settings to the worker (since Milestone 3), so a Compose deployment would have analysed with the baseline even with a key | Worker receives AI and notification settings |
 
+## Defects found during Milestone 5 (all fixed, with regression tests)
+| Severity | Defect | Fix |
+|---|---|---|
+| High (found in testing) | Aggregate-currency and cache validity relied only on maxima of write-time columns, so deletions were invisible to them; the report consistency check failed a report instead of rendering a wrong timeline | Aggregate timelines are cross-checked against base totals and fall back; cache also keyed by data version; fixtures now use write-time timestamps as production does |
+| Medium | Cached responses never hit: the stored data stamp was compared as a JSON string, but jsonb reorders keys | Field-by-field comparison |
+| Medium | Scheduled runs took `queued_at` from the DB clock while the sweep used the injected clock (with a skewed clock, a fresh run could be cancelled as "not started") | Same clock for both |
+| Medium | Refresh insert failed (`$1` typed as text into a uuid column) | Explicit cast |
+| Low | PDF cover note overflowed onto an extra page and displaced footers | Note placed inside the margin without auto page break |
+| Low | Engine limitations were English inside Indonesian reports | Coded, bilingual limitation messages |
+| Low | Dashboard default `to = now` made every request a cache miss | Default end rounded up to the next minute |
+| Low | `dump.rdb` (Redis snapshot) had been committed since Milestone 4 | Removed and ignored |
+
 ## Security risks (open)
 1. **RLS context is set by the application.** An attacker with arbitrary SQL execution as the app role can set
    `app.tenant_id`/`app.system` and read any tenant. RLS guards against logic bugs, not SQL injection.
@@ -160,9 +196,11 @@ None known. All automated tests pass (see bottom).
    sent to the provider. No account data or analyst input is sent. Prompt injection is contained by the evidence check (output can only
    cite text that exists in the source) and by AI output having no access to tools, the database or authorization decisions. Untested
    against a live model.
-5. **System-context scans for scheduling:** `alert_rules`, `notification_deliveries` and `webhook_deliveries` have a read-only policy for
+5. **System-context scans for scheduling:** `alert_rules`, `notification_deliveries`, `webhook_deliveries`, `report_schedules`, `report_runs`, `report_artifacts` and `analytics_state` have a read-only policy for
    the system context so the scheduler can find due work. Combined with risk 1, an attacker with SQL execution could read them.
 6. **Webhook payloads leave the platform** (issue title, counts, source links) to tenant-verified HTTPS endpoints; tenants control those endpoints.
+7. **Report artifacts are stored in PostgreSQL (bytea)** until expiry. Backups contain them; backup retention must match the
+   report retention policy. Moving them to object storage with server-side encryption is recommended at scale.
 
 ## Data-source and licensing risks
 - **No source has been legally reviewed.** The two live RSS sources are registered "for limited integration test only", with a basis
@@ -175,6 +213,18 @@ None known. All automated tests pass (see bottom).
 
 ## Required external credentials
 Managed IdP · email provider (SMTP: `SMTP_URL`, `EMAIL_FROM`) · WhatsApp Business Cloud API (optional) · Redis (required for collection and analysis) · `ANTHROPIC_API_KEY` (for AI-model analysis; baseline otherwise) · `CREDENTIALS_KEY` (webhook signing secrets; credentialed connectors) · a licensed news provider or publisher API contract (for a commercial second connector) · written source authorizations.
+
+## Test results (2026-10-20, after Milestone 5)
+| Command | Result |
+|---|---|
+| `npm run lint`, `npm run typecheck` (API + web) | ✔ |
+| API jest (Postgres 16 + Redis 7) | **423 passed, 0 failed, 0 skipped**; two consecutive runs green |
+| web `node:test` | 12 passed |
+| `npm run build` (API + web) | ✔ |
+| `npm audit --omit=dev` | 0 vulnerabilities |
+| Migration 0009 on the dev DB | applied; placeholder report tables were empty; 211 real records preserved; 57/57 tables with forced RLS |
+| Live run | aggregates built; all analytics endpoints on real data; 8 reports (all five templates, both languages) generated, PDF/CSV downloaded and inspected |
+| Browser smoke (live data) | executive dashboard (tooltip, table view, custom-period + project filter), reports (generate, history, run preview, PDF download): no console errors |
 
 ## Test results (2026-10-19, after Milestone 4)
 | Command | Result |
@@ -217,7 +267,8 @@ Found and fixed during the run: a test helper bug, a Jest parallelism issue (tes
 now in the config), and a real calibration issue from live data (60-day `max-age` on a live feed, now capped).
 
 ## Next milestone
-**Milestone 5, reporting:** source-backed PDF/CSV reports (issue briefs from the persisted evidence, periodic coverage reports from the
-aggregates), scheduling and history, reusing the issue evidence and severity breakdowns. Before relying on tone-based alerts in
-production, configure and evaluate an AI model (`npm run eval:ai -- --llm`). Configure a real email provider and run one delivery
-through it. Still recommended: legal review of publisher terms and a licensed full-text source.
+**Milestone 6, commercial readiness:** metering and server-enforced plan limits (building on the per-tenant report quotas), billing
+port, **retention jobs** (records, report artifacts already expire), export/deletion workflows, break-glass support access,
+monitoring and hardening (managed IdP with MFA). Before relying on tone figures or AI commentary in production, configure and evaluate
+an AI model (`npm run eval:ai -- --llm`) and generate a report with commentary against it. Configure a real email provider. Still
+recommended: legal review of publisher terms and of excerpt redistribution in exports, and a licensed full-text source.

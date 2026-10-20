@@ -30,7 +30,7 @@ export default function RulesPage() {
   const [projects, setProjects] = useState<Project[]>([]);
   const [members, setMembers] = useState<Member[]>([]);
   const [sources, setSources] = useState<Source[]>([]);
-  const [entities, setEntities] = useState<Array<{ id: string; display_name: string }>>([]);
+  const [entities, setEntities] = useState<Array<{ id: string; name?: string }>>([]);
   const [webhooks, setWebhooks] = useState<Array<{ id: string; name: string; verified_at: string | null }>>([]);
   const [editing, setEditing] = useState<Rule | 'new' | null>(null);
   const [type, setType] = useState('volume_spike');
@@ -46,7 +46,7 @@ export default function RulesPage() {
     api<Project[]>(`${base}/projects`).then(setProjects).catch(() => undefined);
     api<Member[]>(`${base}/members`).then(setMembers).catch(() => undefined);
     api<Source[]>(`${base}/sources`).then(setSources).catch(() => undefined);
-    api<{ entities: Array<{ id: string; display_name: string }> }>(`${base}/analytics/entities?limit=100`).then((r) => setEntities(r.entities)).catch(() => undefined);
+    api<{ entities: Array<{ id: string; name?: string }> }>(`${base}/analytics/entities?days=366&limit=100`).then((r) => setEntities(r.entities)).catch(() => undefined);
     api<Array<{ id: string; name: string; verified_at: string | null }>>(`${base}/webhooks`).then(setWebhooks).catch(() => undefined);
   }, [base, load]);
 
@@ -133,7 +133,7 @@ export default function RulesPage() {
             <div className="md:col-span-2"><label className="label" htmlFor="keywords">Keyword expression {t === 'keyword' ? '(required)' : '(optional filter)'}</label>
               <input id="keywords" name="keywords" defaultValue={c.filters?.keywords ?? ''} className="input" placeholder='e.g. contamination OR "boil water"' />
               {problem('filters.keywords') && <p className="text-xs text-red-700">{problem('filters.keywords')}</p>}</div>
-            <div><label className="label" htmlFor="entityIds">Institutions / entities</label><select id="entityIds" name="entityIds" multiple className="input h-24" defaultValue={c.filters?.entityIds ?? []}>{entities.map((e) => <option key={e.id} value={e.id}>{e.display_name}</option>)}</select></div>
+            <div><label className="label" htmlFor="entityIds">Institutions / entities</label><select id="entityIds" name="entityIds" multiple className="input h-24" defaultValue={c.filters?.entityIds ?? []}>{entities.map((e) => <option key={e.id} value={e.id}>{e.name}</option>)}</select></div>
             <div><label className="label" htmlFor="topics">Topics</label><select id="topics" name="topics" multiple className="input h-24" defaultValue={c.filters?.topics ?? []}>{Object.entries(TOPIC_LABEL).filter(([k]) => k !== 'unknown').map(([k, v]) => <option key={k} value={k}>{v}</option>)}</select></div>
             <div><label className="label" htmlFor="sourceIds">Sources</label><select id="sourceIds" name="sourceIds" multiple className="input h-24" defaultValue={c.filters?.sourceIds ?? []}>{sources.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}</select></div>
           </fieldset>

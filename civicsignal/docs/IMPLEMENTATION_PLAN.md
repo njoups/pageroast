@@ -79,8 +79,12 @@ only. Measured quality: docs/AI_EVALUATION.md (baseline tone is weak on held-out
 ## Milestone 4 — Issue detection and alerts ✅ verified on live data · 🟡 email via local SMTP only, WhatsApp unconfigured (2026-10-19)
 Aggregates with documented formulas, share-of-voice disclosure, alert rules, spike detection, notifications, ack/escalation, incident timeline.
 
-## Milestone 5 — Reporting ⬜ (next)
-PDF/CSV, scheduled generation, templates, citations, report history, mandatory report metadata.
+## Milestone 5 — Analytics and executive reporting ✅ verified on live data · 🟡 AI commentary not verified with a live model, email via local SMTP only (2026-10-20)
+Analytics engine (coverage, sentiment, share of voice, sources, topics, entities, issues) with documented formulas, incremental
+hourly aggregation, cache with data-version invalidation and stated freshness; executive dashboard; five versioned report templates;
+evidence workflow with reference and metric-consistency validation; validated optional AI commentary; PDF and licence-aware CSV;
+authenticated downloads, expiry and quotas; timezone-aware idempotent schedules with recipient authorisation, retries and
+abandoned-run handling. See docs/ANALYTICS_METHODOLOGY.md and docs/REPORT_TEMPLATES.md.
 
 ## Milestone 6 — Commercial readiness ⬜
 Metering, plan limits (server-enforced), billing port, retention jobs, export/delete workflows, break-glass support access, monitoring, hardening.
