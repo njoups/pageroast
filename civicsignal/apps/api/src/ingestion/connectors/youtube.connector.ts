@@ -44,7 +44,8 @@ export function youtubeQuotaDay(t = new Date()): { day: string; resetsAt: Date }
   return { day: `${p.y}-${String(p.m).padStart(2, '0')}-${String(p.d).padStart(2, '0')}`, resetsAt: zonedToUtc(n.y, n.m, n.d, 0, 0, YOUTUBE_QUOTA_TZ) };
 }
 
-const HASHTAG = /(?:^|[^\p{L}\p{N}_&])#([\p{L}\p{N}_]{2,100})/gu;
+// A hashtag starts the text or follows a character that cannot be part of a URL or entity ("/#frag", "?a=#x", "&#39;").
+const HASHTAG = /(?:^|[^\p{L}\p{N}_&/=?#])#([\p{L}\p{N}_]{2,100})/gu;
 /** Hashtags written in the text (lower-cased, unique, at most 30). Nothing is inferred. */
 export function extractHashtags(...texts: Array<string | null | undefined>): string[] {
   const out = new Set<string>();

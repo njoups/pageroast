@@ -30,6 +30,7 @@ describe('production configuration', () => {
     [{ METRICS_TOKEN: 'short' }, /METRICS_TOKEN/],
     [{ SESSION_IDLE_SECONDS: '60' }, /SESSION_IDLE_SECONDS/],
     [{ APP_ENV: 'prod' }, /APP_ENV/],
+    [{ YOUTUBE_API_BASE_URL: 'http://127.0.0.1:9/youtube/v3' }, /YOUTUBE_API_BASE_URL/],
   ])('refuses %j', (patch, err) => {
     expect(() => loadConfig({ ...prodBase, ...patch })).toThrow(err);
   });

@@ -273,7 +273,7 @@ export class SocialService {
     return this.db.withTenant(t.orgId, auth.userId, async (c) => {
       const r = await this.loadRow(c, id);
       const d = providerForKind(r.kind)!;
-      const rows = (await c.query<{ day: Date; bucket: string; requests: number; units: string; records_retrieved: number; records_rejected: number; rate_limited: number }>(
+      const rows = (await c.query<{ day: string; bucket: string; requests: number; units: string; records_retrieved: number; records_rejected: number; rate_limited: number }>(
         `SELECT day, bucket, requests, units, records_retrieved, records_rejected, rate_limited FROM provider_usage
          WHERE connector_id = $1 AND day > current_date - $2::int ORDER BY day DESC, bucket`, [r.connector_id, days])).rows;
       const totals = rows.reduce((a, x) => ({ requests: a.requests + x.requests, units: a.units + Number(x.units), recordsRetrieved: a.recordsRetrieved + x.records_retrieved,
@@ -285,7 +285,7 @@ export class SocialService {
          WHERE m.source_id = $1 AND a.status IN ('succeeded','partial') AND a.finished_at > now() - make_interval(days => $2)`, [id, days])).rows[0]!;
       return {
         windowDays: days, provider: d.provider, quotaModel: d.pricing.model,
-        days: rows.map((x) => ({ day: x.day.toISOString().slice(0, 10), bucket: x.bucket, requests: x.requests, units: Number(x.units), recordsRetrieved: x.records_retrieved, recordsRejected: x.records_rejected, rateLimited: x.rate_limited })),
+        days: rows.map((x) => ({ day: x.day, bucket: x.bucket, requests: x.requests, units: Number(x.units), recordsRetrieved: x.records_retrieved, recordsRejected: x.records_rejected, rateLimited: x.rate_limited })),
         totals,
         quotaToday: await quotaState(c, r.connector_id, r.kind, r.config),
         storage: { records: storage.n, approxBytes: Number(storage.bytes) },

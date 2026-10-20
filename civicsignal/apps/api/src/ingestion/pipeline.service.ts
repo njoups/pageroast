@@ -148,28 +148,35 @@ export class IngestionPipeline {
    */
   private async socialPreflight(job: CollectJob, src: SourceRow, cfg: unknown) {
     const connector = getConnector(src.kind)!;
-    await this.db.withTenant(job.tenantId, job.requestedBy ?? '00000000-0000-0000-0000-000000000000', async (c) => {
+    type Pause = Parameters<typeof pauseConnector>[1];
+    // Decide in one transaction (budget notices are recorded and committed), then pause in another and throw:
+    // throwing inside the first transaction would roll the notices and the pause back.
+    const decision = await this.db.withTenant(job.tenantId, job.requestedBy ?? '00000000-0000-0000-0000-000000000000', async (c): Promise<{ err: ConnectorError; pause?: Pause } | null> => {
       const now = new Date();
       if (src.paused_until && src.paused_until > now && (src.paused_reason !== 'budget_soft_limit' || job.trigger === 'schedule')) {
-        throw new ConnectorError('quota', `Collection is paused until ${src.paused_until.toISOString()} (${src.paused_reason ?? 'paused'})`, { resumeAt: src.paused_until });
+        return { err: new ConnectorError('quota', `Collection is paused until ${src.paused_until.toISOString()} (${src.paused_reason ?? 'paused'})`, { resumeAt: src.paused_until }) };
       }
       const budget = await checkBudgets(c, { tenantId: job.tenantId, connectorId: src.connector_id, kind: src.kind, now });
       const hit = budget.items.find((i) => i.level === 'hard') ?? (job.trigger === 'schedule' ? budget.items.find((i) => i.level === 'soft') : undefined);
       if (hit) {
         const until = budgetPeriodEnd(src.kind, hit.period as 'day' | 'month', now);
-        await pauseConnector(c, { tenantId: job.tenantId, connectorId: src.connector_id, sourceId: src.id, until, reason: hit.level === 'hard' ? 'budget_hard_limit' : 'budget_soft_limit' });
-        throw new ConnectorError('quota', `Budget ${hit.level} limit reached for ${hit.metric} (${hit.value} this ${hit.period}); collection paused until ${until.toISOString()}`, { resumeAt: until });
+        return { err: new ConnectorError('quota', `Budget ${hit.level} limit reached for ${hit.metric} (${hit.value} this ${hit.period}); collection paused until ${until.toISOString()}`, { resumeAt: until }),
+          pause: { tenantId: job.tenantId, connectorId: src.connector_id, sourceId: src.id, until, reason: hit.level === 'hard' ? 'budget_hard_limit' : 'budget_soft_limit' } };
       }
       const need = connector.estimateSyncUsage?.(cfg) ?? {};
       const q = await quotaState(c, src.connector_id, src.kind, cfg, now);
       const short = quotaShortfall(q, need);
       if (short.length) {
         const until = q.resetsAt ? new Date(q.resetsAt) : budgetPeriodEnd(src.kind, 'day', now);
-        await pauseConnector(c, { tenantId: job.tenantId, connectorId: src.connector_id, sourceId: src.id, until, reason: 'provider_quota',
-          metric: short[0]!.bucket, value: q.buckets.find((b) => b.key === short[0]!.bucket)?.used ?? 0, threshold: q.buckets.find((b) => b.key === short[0]!.bucket)?.limit ?? 0, periodKey: q.day });
-        throw new ConnectorError('quota', `Not enough provider quota left today for this sync (${short.map((x) => `${x.bucket}: needs up to ${x.need}, ${x.remaining} left`).join('; ')}); resumes after the quota resets`, { resumeAt: until });
+        const b = q.buckets.find((x) => x.key === short[0]!.bucket);
+        return { err: new ConnectorError('quota', `Not enough provider quota left today for this sync (${short.map((x) => `${x.bucket}: needs up to ${x.need}, ${x.remaining} left`).join('; ')}); resumes after the quota resets`, { resumeAt: until }),
+          pause: { tenantId: job.tenantId, connectorId: src.connector_id, sourceId: src.id, until, reason: 'provider_quota', metric: short[0]!.bucket, value: b?.used ?? 0, threshold: b?.limit ?? 0, periodKey: q.day } };
       }
+      return null;
     });
+    if (!decision) return;
+    if (decision.pause) await this.db.withTenant(job.tenantId, job.requestedBy ?? '00000000-0000-0000-0000-000000000000', (c) => pauseConnector(c, decision.pause!));
+    throw decision.err;
   }
 
   /** Records provider usage of a failed sync and pauses on provider quota exhaustion. */

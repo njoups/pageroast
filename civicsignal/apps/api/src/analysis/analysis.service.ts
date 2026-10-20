@@ -95,7 +95,11 @@ export class AnalysisService {
     const text = [m.title, m.excerpt ?? '', m.body ?? ''].join('\n');
     const lang = resolveLanguage(text, m.language);
     stages.language = `${lang.language}:${lang.method}`;
-    const shortSocial = record.category === 'social' && `${m.title} ${m.excerpt ?? ''}`.trim().length < SHORT_TEXT_CHARS;
+    // A comment's title is the start of its own text: count (and send) that text once.
+    const commentText = record.contentType === 'comment' && m.excerpt && m.excerpt.replace(/\s+/g, ' ').trim().startsWith(m.title.slice(0, 190));
+    const excerpt = commentText ? (m.excerpt!.replace(/\s+/g, ' ').trim() === m.title ? null : m.excerpt) : m.excerpt;
+    const socialChars = commentText ? m.excerpt!.trim().length : `${m.title} ${m.excerpt ?? ''}`.trim().length;
+    const shortSocial = record.category === 'social' && socialChars < SHORT_TEXT_CHARS;
     const contentStatus = !lang.supported ? 'unsupported_language' : shortSocial ? 'short_text'
       : record.category === 'social' ? 'ok' : m.body || (m.excerpt && m.excerpt.length >= 60) ? 'ok' : 'headline_only';
     if (!lang.supported) {
@@ -109,7 +113,7 @@ export class AnalysisService {
     // 3–6. Entities, topics, sentiment, summary (one structured provider call)
     let result: ProviderResult<ArticleAnalysis>; let used = this.provider; let fallbackReason: string | null = null;
     try {
-      result = await this.provider.analyzeArticle({ title: m.title, excerpt: m.excerpt, body: m.body, publisher: m.publisher, language: lang.language, customTopics: custom, record });
+      result = await this.provider.analyzeArticle({ title: m.title, excerpt, body: m.body, publisher: m.publisher, language: lang.language, customTopics: custom, record });
     } catch (e) {
       const err = e instanceof ProviderError ? e : new ProviderError('network', (e as Error).message);
       if (err.retryable && !isFinalAttempt) {
@@ -125,7 +129,7 @@ export class AnalysisService {
       }
       fallbackReason = `${err.kind}: ${err.message}`;
       used = this.fallback;
-      result = await this.fallback.analyzeArticle({ title: m.title, excerpt: m.excerpt, body: m.body, publisher: m.publisher, language: lang.language, customTopics: custom, record });
+      result = await this.fallback.analyzeArticle({ title: m.title, excerpt, body: m.body, publisher: m.publisher, language: lang.language, customTopics: custom, record });
       logEvent('warn', 'analysis.fallback_used', { tenantId, analysisId, reason: err.kind });
     }
     stages.provider = fallbackReason ? `fallback:${used.name}` : used.name;

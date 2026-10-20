@@ -74,7 +74,7 @@ export interface CostEstimate { status: 'estimated' | 'not_priced' | 'incomplete
  * figure is shown); usage items without a matching price make the estimate 'incomplete'.
  */
 export async function estimateCost(c: PoolClient, provider: string, usage: { requests: number; recordsRetrieved: number }): Promise<CostEstimate> {
-  const rows = (await c.query<{ item: string; unit_price: string; currency: string; verified_at: Date; source_url: string }>(
+  const rows = (await c.query<{ item: string; unit_price: string; currency: string; verified_at: string; source_url: string }>(
     'SELECT item, unit_price, currency, verified_at, source_url FROM provider_pricing WHERE provider = $1', [provider])).rows;
   if (!rows.length) return { status: 'not_priced', amount: null, currency: null, basis: ['No pricing is configured for this provider.'], verifiedAt: null };
   const qty: Record<string, number> = { request: usage.requests, record_read: usage.recordsRetrieved, post_read: usage.recordsRetrieved };
@@ -83,9 +83,9 @@ export async function estimateCost(c: PoolClient, provider: string, usage: { req
   for (const r of rows) {
     if (!(r.item in qty)) { complete = false; basis.push(`${r.item}: no usage counter for this item`); continue; }
     amount += qty[r.item]! * Number(r.unit_price);
-    basis.push(`${qty[r.item]} × ${r.item} at ${r.unit_price} ${r.currency} (verified ${r.verified_at.toISOString().slice(0, 10)}, ${r.source_url})`);
+    basis.push(`${qty[r.item]} × ${r.item} at ${r.unit_price} ${r.currency} (verified ${r.verified_at}, ${r.source_url})`);
   }
-  const verified = rows.map((r) => r.verified_at.toISOString().slice(0, 10)).sort()[0] ?? null;
+  const verified = rows.map((r) => r.verified_at).sort()[0] ?? null;   // DATE columns arrive as YYYY-MM-DD strings
   return { status: complete ? 'estimated' : 'incomplete', amount: complete ? Math.round(amount * 10_000) / 10_000 : null, currency: complete ? [...currencies][0]! : null, basis, verifiedAt: verified };
 }
 

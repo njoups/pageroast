@@ -6,7 +6,7 @@ const fields = z.array(z.enum(SOCIAL_PERMITTED_FIELDS)).max(10)
   .refine((f) => f.includes('title') && f.includes('url'), 'permittedFields must include title and url (attribution requires them)');
 
 export const CreateSocialConnectorSchema = z.object({
-  provider: z.string().regex(/^[a-z_]{2,40}$/),
+  provider: z.string().regex(/^[a-z_]{1,40}$/),
   name: z.string().trim().min(2).max(120),
   config: z.record(z.string(), z.unknown()).default({}),
   authorizationStatus: z.enum(['unverified', 'authorized', 'restricted', 'revoked']).default('unverified'),
