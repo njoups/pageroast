@@ -105,9 +105,10 @@ describe('ingestion queue and worker (e2e, Redis)', () => {
     expect(hitTimes['/down']).toHaveLength(3);
     const gaps = hitTimes['/down']!.slice(1).map((t, i) => t - hitTimes['/down']![i]!);
     // Backoff grows: with a 200 ms base and ±30% jitter the gaps are 140–260 ms, then 280–520 ms (plus processing time).
-    // Exact delays are unit-tested in dedup-health-secrets.spec.ts; this checks the real queue honours them.
+    // Each gap must honour its own minimum. Comparing the two gaps directly is flaky: the ranges plus processing
+    // time overlap (CI once saw 363 ms then 302 ms). Exact delays are unit-tested in dedup-health-secrets.spec.ts.
     expect(gaps[0]!).toBeGreaterThanOrEqual(130);
-    expect(gaps[1]!).toBeGreaterThan(gaps[0]!);
+    expect(gaps[1]!).toBeGreaterThanOrEqual(270);
     const deadLetters = (await dlqHandle.getJobs(['waiting'])).filter((j) => j.data.job.sourceId === bad);
     expect(deadLetters).toHaveLength(1);
     const src = (await http().get(`/api/v1/organizations/${org}/sources/${bad}`).set('Cookie', owner.cookie)).body;
