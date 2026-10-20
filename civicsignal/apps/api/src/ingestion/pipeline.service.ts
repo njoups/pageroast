@@ -301,11 +301,11 @@ export class IngestionPipeline {
         }
       }
       const candidates: DedupCandidate[] = fresh.length
-        ? (await c.query<{ id: string; publisher_domain: string; normalized_title: string; content_hash: string }>(
-            `SELECT id, publisher_domain, normalized_title, content_hash FROM mentions
+        ? (await c.query<{ id: string; publisher_domain: string; normalized_title: string; content_hash: string; published_at: Date | null }>(
+            `SELECT id, publisher_domain, normalized_title, content_hash, published_at FROM mentions
              WHERE publisher_domain = ANY($1::text[]) AND duplicate_status = 'original' AND discovered_at > now() - interval '7 days'
              ORDER BY discovered_at DESC LIMIT 5000`, [[...new Set(fresh.map((f) => f.domain))]])).rows
-            .map((r) => ({ id: r.id, publisherDomain: r.publisher_domain, normalizedTitle: r.normalized_title, contentHash: r.content_hash }))
+            .map((r) => ({ id: r.id, publisherDomain: r.publisher_domain, normalizedTitle: r.normalized_title, contentHash: r.content_hash, publishedAt: r.published_at ? new Date(r.published_at).getTime() : null }))
         : [];
       stages.deduplicate = 'ok';
 
@@ -332,7 +332,7 @@ export class IngestionPipeline {
       for (const f of fresh) {
         // Social records are deduplicated by provider id only: different posts often share a title.
         const decision = social ? { status: 'original' as const, duplicateOf: null, reason: null }
-          : decideDuplicate({ publisherDomain: f.domain, normalizedTitle: f.nTitle, contentHash: f.hash }, candidates,
+          : decideDuplicate({ publisherDomain: f.domain, normalizedTitle: f.nTitle, contentHash: f.hash, publishedAt: f.rec.publishedAt?.getTime() ?? null }, candidates,
             { similarityThreshold: this.config.ingestion.dedupSimilarity, minTokens: 5 });
         const sc = social && f.rec.social ? socialCols(f.rec) : null;
         const body = src.permits_full_text ? f.rec.content : null;
@@ -359,7 +359,7 @@ export class IngestionPipeline {
         if (!id) { counts.known++; continue; } // inserted concurrently by another source's run
         counts.new++;
         if (decision.status !== 'original') { counts.duplicate++; continue; } // duplicates are linked, not re-matched
-        candidates.push({ id, publisherDomain: f.domain, normalizedTitle: f.nTitle, contentHash: f.hash });
+        candidates.push({ id, publisherDomain: f.domain, normalizedTitle: f.nTitle, contentHash: f.hash, publishedAt: f.rec.publishedAt?.getTime() ?? null });
         newOriginals.push(id);
         if (compiled.length) {
           const doc = new MatchDocument([f.rec.title, f.excerpt ?? '', body ?? '', ...(sc?.hashtags.map((h) => `#${h}`) ?? [])].join('\n'));
@@ -420,8 +420,10 @@ export class IngestionPipeline {
     const compiled = compileQuery({ keywords: q.keywords, aliases: q.aliases, exclusions: q.exclusions, booleanExpression: q.boolean_expression, languages: q.languages });
     const rows = (await c.query<{ id: string; title: string; excerpt: string | null; body: string | null; language: string | null }>(
       `SELECT id, title, excerpt, body, language FROM mentions WHERE duplicate_status = 'original' ORDER BY discovered_at DESC LIMIT $1`, [limit])).rows;
-    let n = 0;
+    let n = 0; let i = 0;
     for (const r of rows) {
+      // Yield to the event loop regularly: this runs in an API request and must not stall other tenants' requests.
+      if (++i % 200 === 0) await new Promise((res) => setImmediate(res));
       const m = compiled.match(new MatchDocument([r.title, r.excerpt ?? '', r.body ?? ''].join('\n')), r.language);
       if (!m.matched) continue;
       await c.query(`INSERT INTO mention_matches (tenant_id, mention_id, project_id, query_id, matched_terms) VALUES ($1,$2,$3,$4,$5)`,

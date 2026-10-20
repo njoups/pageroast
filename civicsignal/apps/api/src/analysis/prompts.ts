@@ -60,7 +60,9 @@ export const promptSha256 = (p: PromptDef) => createHash('sha256').update(p.syst
 /** Wraps untrusted text; a forged closing tag inside the content cannot end the block early. */
 export function wrapUntrusted(text: string, attrs: Record<string, string> = {}): string {
   const nonce = randomBytes(6).toString('hex');
-  const safe = text.replace(/<\/?\s*source_document[^>]*>/gi, (m) => m.replace(/</g, '‹').replace(/>/g, '›'));
+  // Any tag opener naming the delimiter is neutralised, with or without a closing '>' (a dangling `</source_document nonce=…`
+  // followed by a newline must not read as the end of the block).
+  const safe = text.replace(/<(\s*\/?\s*source_document)/gi, '‹$1');
   const attrStr = Object.entries(attrs).map(([k, v]) => ` ${k}="${v.replace(/["<>\n]/g, ' ').slice(0, 200)}"`).join('');
   return `<source_document nonce="${nonce}"${attrStr}>\n${safe}\n</source_document nonce="${nonce}">`;
 }

@@ -42,8 +42,13 @@ export function computeSeverity(c: Candidate, ctx: SeverityContext): SeverityRes
   add('change_vs_baseline', ratio ?? null, ratio === undefined ? 0 : step(ratio, [2, 4, 8]), ratio === undefined ? 'not applicable to this signal' : 'ratio ≥2 +1, ≥4 +2, ≥8 +3');
   const ind = independentPublishers(ev);
   add('independent_publishers', ind, step(ind, [3, 6, 12]), '≥3 +1, ≥6 +2, ≥12 +3 (syndicated copies excluded)');
+  // A negative-shift candidate's evidence holds only its negative records, so its share comes from the detector's
+  // population (all confident classifications in the window), never from the evidence list.
   const confident = ev.filter((r) => r.analysed && !r.uncertain && r.label && r.label !== 'unknown');
-  const neg = confident.length >= 20 ? confident.filter((r) => r.label === 'negative').length / confident.length : null;
+  const popConfident = c.signal === 'negative_shift' ? Number(c.result.observed.confident ?? 0) : confident.length;
+  const neg = popConfident < 20 ? null
+    : c.signal === 'negative_shift' ? Number(c.result.observed.negativeShare)
+    : confident.filter((r) => r.label === 'negative').length / confident.length;
   add('negative_share', neg === null ? null : Math.round(neg * 100) / 100, neg === null ? 0 : step(neg, [0.4, 0.6]),
     neg === null ? 'fewer than 20 confident classifications: not scored' : '≥40% +1, ≥60% +2');
   add('topic_relevance', ctx.topicRelevant ? 'yes' : 'no', ctx.topicRelevant ? 1 : 0, 'subject is a project category or monitored entity +1');

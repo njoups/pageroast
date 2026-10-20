@@ -67,7 +67,7 @@ describe('media lifecycle end to end (integration)', () => {
 
   const run = (key: string) => pipeline.run({ tenantId: org, sourceId, trigger: 'manual', idempotencyKey: key, requestedBy: owner.id }, 1, true);
   const ledger = async (metric: string) => (await db.query(`SELECT count(*)::int AS n, coalesce(sum(quantity), 0)::int AS q FROM usage_records WHERE tenant_id = $1 AND metric = $2`, [org, metric])).rows[0];
-  let mentionIds: string[] = [];
+
 
   it('collects once: normalises, deduplicates, matches queries and meters stored records', async () => {
     const r = await run('life-1');
@@ -75,7 +75,7 @@ describe('media lifecycle end to end (integration)', () => {
     const ms = (await db.query(`SELECT id, url, canonical_url, title, duplicate_status FROM mentions WHERE tenant_id = $1 ORDER BY title`, [org])).rows;
     expect(ms).toHaveLength(4);
     expect(ms.find((m) => m.url.startsWith('https://news.example/banjir-1'))!.canonical_url).toBe('https://news.example/banjir-1');   // tracking params stripped for identity
-    mentionIds = ms.map((m) => m.id);
+
     expect(await ledger('mentions_ingested')).toEqual({ n: 1, q: 4 });
     // A redelivered job and a second run of unchanged content add nothing.
     expect((await run('life-1')).status).toBe('already_succeeded');
@@ -138,6 +138,9 @@ describe('media lifecycle end to end (integration)', () => {
     expect(csv).toContain('news.example');
     expect(csv).not.toMatch(/(^|,)=HYPERLINK/m);                              // formula neutralised
     expect(await ledger('exports')).toMatchObject({ n: 1 });
+    // The CSV is a row-level export: it needs data:export (owners/admins), unlike the PDF (QA-AZ-02).
+    await api(analyst).get(`/reports/runs/${runRes.body.id}/download/csv`).expect(403);
+    expect(await ledger('exports')).toMatchObject({ n: 1 });                 // a refused download is not metered
     await http().get(`/api/v1/organizations/${otherOrg}/reports/runs/${runRes.body.id}/download/csv`).set('Cookie', outsider.cookie).expect(404);
   });
 

@@ -55,13 +55,21 @@ export class SafeHttpClient {
     const deadline = AbortSignal.timeout(this.opts.timeoutMs);
     const combined = signal ? AbortSignal.any([signal, deadline]) : deadline;
     let current = url;
+    let hopHeaders = headers;
+    const origin = new URL(url).origin;
     for (let hop = 0; hop <= this.opts.maxRedirects; hop++) {
       let target: URL;
       try { target = assertFetchableUrl(current, { allowPrivateHosts: this.opts.allowPrivateHosts, allowAnyPort: this.opts.allowAnyPort }); }
       catch (e) { throw new HttpFetchError('unsafe', (e as Error).message); }
-      const res = await this.once(target, headers, combined);
+      const res = await this.once(target, hopHeaders, combined);
       if ([301, 302, 303, 307, 308].includes(res.status) && res.headers.location) {
-        current = new URL(res.headers.location, target).toString();
+        let next: URL;
+        try { next = new URL(res.headers.location, target); } catch { throw new HttpFetchError('redirect', 'Redirect with an invalid Location header'); }
+        if (target.protocol === 'https:' && next.protocol === 'http:') throw new HttpFetchError('redirect', 'Redirect from https to http refused');
+        // Caller headers may carry credentials (API keys, conditional-request validators for the original resource):
+        // they are sent only to the original origin, never to a host a redirect points at.
+        if (next.origin !== origin) hopHeaders = Object.fromEntries(Object.entries(headers).filter(([k]) => /^(accept|accept-language|user-agent)$/i.test(k)));
+        current = next.toString();
         continue;
       }
       return { ...res, finalUrl: target.toString() };

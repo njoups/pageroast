@@ -57,18 +57,20 @@ export class AnthropicProvider implements AnalysisProvider {
     } catch (e) {
       throw mapError(e);
     }
-    if (res.stop_reason === 'refusal') throw new ProviderError('refusal', 'The model declined to analyse this record');
-    if (res.stop_reason === 'max_tokens') throw new ProviderError('invalid_output', 'Model output was truncated at max_tokens');
+    // The provider has answered: these tokens are billed whether or not the answer is usable, so every rejection below
+    // carries the usage for the caller to record.
+    const usage = { inputTokens: res.usage.input_tokens, outputTokens: res.usage.output_tokens, cacheReadTokens: res.usage.cache_read_input_tokens ?? 0,
+      cacheWriteTokens: res.usage.cache_creation_input_tokens ?? 0 };
+    const spent = { usage, model: res.model };
+    if (res.stop_reason === 'refusal') throw new ProviderError('refusal', 'The model declined to analyse this record', spent);
+    // Truncation repeats on retry with the same input, so it is not retried (each attempt would spend max_tokens again).
+    if (res.stop_reason === 'max_tokens') throw new ProviderError('truncated', 'Model output was truncated at max_tokens', spent);
     const text = res.content.filter((b): b is Anthropic.TextBlock => b.type === 'text').map((b) => b.text).join('');
     let raw: unknown;
-    try { raw = JSON.parse(text); } catch { throw new ProviderError('invalid_output', 'AI provider returned malformed JSON'); }
+    try { raw = JSON.parse(text); } catch { throw new ProviderError('invalid_output', 'AI provider returned malformed JSON', spent); }
     const parsed = schema.safeParse(raw);
-    if (!parsed.success) throw new ProviderError('invalid_output', 'Model output did not match the required schema');
-    return {
-      parsed: parsed.data as T,
-      usage: { inputTokens: res.usage.input_tokens, outputTokens: res.usage.output_tokens, cacheReadTokens: res.usage.cache_read_input_tokens ?? 0 },
-      model: res.model,
-    };
+    if (!parsed.success) throw new ProviderError('invalid_output', 'Model output did not match the required schema', spent);
+    return { parsed: parsed.data as T, usage, model: res.model };
   }
 
   async analyzeArticle(input: ArticleInput): Promise<ProviderResult<ArticleAnalysis>> {

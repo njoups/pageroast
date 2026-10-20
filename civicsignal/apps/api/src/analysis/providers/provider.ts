@@ -2,19 +2,21 @@ import type { CustomTopic } from '../taxonomy';
 import type { ArticleAnalysis, MultiSummary } from '../schemas';
 
 export type ProviderErrorKind = 'timeout' | 'network' | 'rate_limited' | 'server' | 'invalid_output'          // retryable
-  | 'auth' | 'invalid_request' | 'refusal' | 'unconfigured';                                                     // not retryable
+  | 'auth' | 'invalid_request' | 'refusal' | 'unconfigured' | 'truncated';                                       // not retryable
 
 const RETRYABLE = new Set<ProviderErrorKind>(['timeout', 'network', 'rate_limited', 'server', 'invalid_output']);
 
 export class ProviderError extends Error {
-  constructor(readonly kind: ProviderErrorKind, message: string, readonly opts: { retryAfterMs?: number; status?: number } = {}) {
+  /** `usage`/`model`: set when the provider answered (and billed) before the answer was rejected, so the spend is recorded. */
+  constructor(readonly kind: ProviderErrorKind, message: string, readonly opts: { retryAfterMs?: number; status?: number; usage?: Usage; model?: string } = {}) {
     super(message);
     this.name = 'ProviderError';
   }
   get retryable(): boolean { return RETRYABLE.has(this.kind); }
 }
 
-export interface Usage { inputTokens: number; outputTokens: number; cacheReadTokens: number }
+/** Provider-reported tokens. inputTokens excludes cache reads and cache writes (Anthropic convention); they are reported separately. */
+export interface Usage { inputTokens: number; outputTokens: number; cacheReadTokens: number; cacheWriteTokens?: number }
 export interface ProviderResult<T> { output: T; usage: Usage; model: string; promptVersion: string }
 
 export interface ArticleInput {

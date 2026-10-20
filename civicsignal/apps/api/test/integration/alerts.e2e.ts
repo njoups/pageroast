@@ -373,6 +373,16 @@ describe('issue detection and alerting (e2e)', () => {
       const id = out.outcomes.find((x) => x.ruleId === r)!.issueId!;
       return { id, email: (await deliveries(id)).find((x) => x.channel === 'email')! };
     };
+    it('QA-AR-01: two jobs for the same delivery (original and a re-queue) send one email', async () => {
+      const { email } = await emailIssue('doubledelivery');
+      const ours = () => mail.filter((m) => m.raw.includes('doubledelivery')).length;   // the suite's worker also sends other issues' mail
+      const outs = await Promise.all([notifications.deliver(org, email.id, 1, false), notifications.deliver(org, email.id, 2, false), notifications.deliver(org, email.id, 2, false)]);
+      expect(outs.filter((o) => o.outcome === 'delivered')).toHaveLength(1);
+      await until(async () => (await db.query('SELECT 1 FROM notification_deliveries WHERE id = $1 AND status = $2', [email.id, 'delivered'])).rowCount);
+      await new Promise((r) => setTimeout(r, 500));                         // let any duplicate job finish
+      expect(ours()).toBe(1);
+      expect((await db.query('SELECT status FROM notification_deliveries WHERE id = $1', [email.id])).rows[0].status).toBe('delivered');
+    });
     it('temporary SMTP failures are retried with backoff and then delivered', async () => {
       smtpMode = 'temp';
       const { email } = await emailIssue('pipeburst');
@@ -386,7 +396,7 @@ describe('issue detection and alerting (e2e)', () => {
       smtpMode = 'perm';
       const { email } = await emailIssue('leakage');
       await enqueuer.deliveries(org, [email.id], []);
-      const row = await until(async () => { const x = (await db.query('SELECT * FROM notification_deliveries WHERE id = $1', [email.id])).rows[0]; return x.status === 'failed' && x; });
+      const row = await until(async () => { const x = (await db.query('SELECT * FROM notification_deliveries WHERE id = $1', [email.id])).rows[0]; return x.status === 'dead' && x; });   // permanent rejection: dead at once (QA-AR-12)
       expect(row.attempts).toBe(1);
       expect(row.last_error).toMatch(/550/);
       smtpMode = 'accept';

@@ -126,6 +126,13 @@ aggregates and alert rules default to news; `/social/analytics` reports social d
 | `analytics` | Analytics engine (coverage, sentiment, share of voice, sources, topics, entities, issues, overview), hourly aggregation, cache, time-zone math |
 | `reports` | Report definitions, templates, generator (evidence workflow), PDF/CSV renderers, schedules, queue + scheduler, downloads |
 
+## Reliability patterns (hardened in Prompt 09)
+- **Claim before side effect.** Email and webhook deliveries, and usage-notice emails, move to `sending` with `claimed_at` in one atomic `UPDATE … RETURNING` before anything is sent. A stale claim (worker died) is reclaimed by the alerts tick. Permanent failures end as `dead`. This prevents duplicate sends across workers and retries.
+- **Usage serialization.** A per-tenant advisory lock is taken shared by `consume()` and exclusive by reconciliation and corrections, so a reconcile can never overwrite usage recorded concurrently.
+- **Spend recorded outside the business transaction.** AI token usage is written in its own transaction right after the provider call, so failed or rolled-back analyses are still metered.
+- **Provider events are matched, not trusted.** Billing webhooks act only when the event's subscription reference and checkout session match recorded state. Unknown references are retried. Paid invoices and billing periods only move forward.
+- **Time zones are frozen where periods depend on them.** `subscriptions.usage_timezone` is set with the usage anchor. Analytics date-only bounds are tenant-local days. Social budget periods follow the provider's own clock (Pacific time for YouTube).
+
 ## Tenant isolation (defence in depth)
 1. **Database (authoritative):** every tenant-owned table has `tenant_id`, `ENABLE` + `FORCE ROW LEVEL SECURITY`, and a
    policy `tenant_id = app_current_tenant()`. The API connects as `civicsignal_app` (no superuser, no BYPASSRLS, not the owner).

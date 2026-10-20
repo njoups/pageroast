@@ -37,13 +37,14 @@ const Assign = z.object({ planCode: Code, billingMode: z.enum(['self_service', '
   periodStart: z.string().datetime().optional(), periodEnd: z.string().datetime().optional(), trialEndsAt: z.string().datetime().optional(), contractId: z.string().uuid().optional(),
   resetUsagePeriod: z.boolean().default(false), reason: Reason }).strict();
 const Transition = z.object({ event: z.enum(['activate', 'request_activation', 'payment_failed', 'payment_recovered', 'suspend', 'reinstate', 'renewal_due', 'renew', 'cancel_now', 'term_expired']),
-  periodEnd: z.string().datetime().optional(), reason: Reason }).strict();
+  periodEnd: z.string().datetime().optional(), contractEndDate: Day.optional(), reason: Reason }).strict();
 const ChangePlan = z.object({ planCode: Code, when: z.enum(['now', 'period_end', 'at']), at: z.string().datetime().optional(), reason: Reason }).strict();
 const CancelFlag = z.object({ value: z.boolean(), reason: Reason }).strict();
 const Override = z.object({ metric: z.string().refine(isMetric, 'Unknown metric'), limit: z.number().nonnegative().nullable(), enforcement: z.enum(['hard', 'soft']),
   expiresAt: z.string().datetime().optional(), reason: Reason }).strict();
 const ReasonOnly = z.object({ reason: Reason }).strict();
-const Correction = z.object({ recordId: z.string().regex(/^\d+$/), quantity: z.number().refine((n) => n !== 0 && Number.isFinite(n)), reason: Reason }).strict();
+const Correction = z.object({ recordId: z.string().regex(/^\d+$/), quantity: z.number().refine((n) => n !== 0 && Number.isFinite(n)), reason: Reason,
+  idempotencyKey: z.string().regex(/^[A-Za-z0-9._:-]{8,100}$/).optional() }).strict();
 const ContractInput = z.object({
   customerName: z.string().min(2).max(300), contractReference: z.string().min(1).max(200), poReference: z.string().max(200).optional(), planCode: Code,
   startDate: Day, endDate: Day, billingFrequency: z.enum(['monthly', 'quarterly', 'semiannual', 'annual', 'one_time']), paymentTermsDays: z.number().int().min(0).max(365).default(30),
@@ -186,6 +187,12 @@ export class PlatformCommercialService {
       const sub = await lockSubscription(c, tenantId);
       if (!sub) throw notFound('Subscription');
       const patch = d.periodEnd ? { current_period_start: sub.current_period_end ?? new Date(), current_period_end: new Date(d.periodEnd) } : {};
+      // Renewing a contract extends its term; otherwise the scheduler would flag the same end date again on its next tick.
+      if (d.event === 'renew' && sub.contract_id) {
+        if (!d.contractEndDate) throw badRequest('validation_failed', 'Renewing a contract subscription needs contractEndDate (the new end of term)');
+        const k = await c.query(`UPDATE contracts SET end_date = $2::date, renewal_date = NULL, status = 'active' WHERE id = $1 AND end_date < $2::date RETURNING id`, [sub.contract_id, d.contractEndDate]);
+        if (!k.rowCount) throw badRequest('validation_failed', 'contractEndDate must be after the current contract end date');
+      }
       return transition(c, sub, d.event as SubEvent, actor, patch);
     }, { event: d.event });
   }
@@ -236,7 +243,7 @@ export class PlatformCommercialService {
   correct(a: AuthContext, m: RequestMeta, tenantId: string, body: unknown) {
     const d = parse(Correction, body);
     return this.inTenant(a, m, tenantId, 'usage_corrected', { type: 'usage_record', id: d.recordId }, d.reason, async (c) => {
-      const r = await correctUsage(c, tenantId, { correctsId: d.recordId, quantity: d.quantity, reason: d.reason, userId: a.userId });
+      const r = await correctUsage(c, tenantId, { correctsId: d.recordId, quantity: d.quantity, reason: d.reason, userId: a.userId, idempotencyKey: d.idempotencyKey });
       if (!r) throw notFound('Usage record');
       return r;
     }, { quantity: d.quantity });
@@ -302,7 +309,7 @@ export class PlatformCommercialService {
   }
   void(a: AuthContext, m: RequestMeta, tenantId: string, id: string, body: unknown) {
     const d = parse(ReasonOnly, body);
-    return this.inTenant(a, m, tenantId, 'invoice_voided', { type: 'invoice', id }, d.reason, async (c) => invoiceOut(await voidInvoice(c, tenantId, id)));
+    return this.inTenant(a, m, tenantId, 'invoice_voided', { type: 'invoice', id }, d.reason, async (c, actor) => invoiceOut(await voidInvoice(c, tenantId, id, actor)));
   }
 
   // ── Costs, health, audit, sales ──

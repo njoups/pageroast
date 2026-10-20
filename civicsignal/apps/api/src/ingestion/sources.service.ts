@@ -149,7 +149,12 @@ export class SourcesService {
       if (dto.feedUrl !== undefined && kind !== 'feed') throw badRequest('validation_failed', 'Only feed sources have a feedUrl');
       const feedUrl = dto.feedUrl !== undefined ? this.validateUrl(dto.feedUrl) : (cur.feed_url as string | null);
       const config = dto.connectorConfig !== undefined ? this.validateConnectorConfig(kind, dto.connectorConfig) : cur.config;
-      const authorizationStatus = dto.authorizationStatus ?? String(cur.authorization_status);
+      // The authorization basis was recorded for one publisher. Moving the feed to another host needs a fresh, explicit
+      // authorization in the same request; otherwise the source drops back to 'unverified' (and stops collecting).
+      const host = (u: string | null) => { try { return u ? new URL(u).hostname.replace(/^www\./, '') : null; } catch { return null; } };
+      const hostChanged = dto.feedUrl !== undefined && host(cur.feed_url as string | null) !== host(feedUrl);
+      const reauthorized = dto.authorizationStatus === 'authorized' && !!dto.authorizationBasis?.trim();
+      const authorizationStatus = hostChanged && !reauthorized ? 'unverified' : dto.authorizationStatus ?? String(cur.authorization_status);
       // Leaving 'authorized' always stops collection.
       const enabled = authorizationStatus === 'authorized' ? cur.enabled : false;
       const authorizationBasis = dto.authorizationBasis !== undefined ? dto.authorizationBasis : (cur.authorization_basis as string | null);
@@ -179,7 +184,7 @@ export class SourcesService {
       }
       const changed = Object.keys(dto);
       await this.audit.record(c, { tenantId: t.orgId, actorUserId: auth.userId, action: 'source.updated', targetType: 'source', targetId: id,
-        metadata: { fields: changed, ...(dto.authorizationStatus && dto.authorizationStatus !== cur.authorization_status ? { authorization: { from: cur.authorization_status, to: dto.authorizationStatus } } : {}) }, meta });
+        metadata: { fields: changed, ...(hostChanged ? { feedHost: { from: host(cur.feed_url as string | null), to: host(feedUrl) }, authorizationReset: !reauthorized } : {}), ...(dto.authorizationStatus && dto.authorizationStatus !== cur.authorization_status ? { authorization: { from: cur.authorization_status, to: dto.authorizationStatus } } : {}) }, meta });
       return presentSource(await this.loadRow(c, id));
     });
   }

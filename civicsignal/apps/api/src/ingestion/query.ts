@@ -18,7 +18,7 @@ export class QuerySyntaxError extends Error {
   constructor(message: string, readonly position: number) { super(message); this.name = 'QuerySyntaxError'; }
 }
 
-export const QUERY_LIMITS = { maxLength: 2000, maxTerms: 100, maxDepth: 12, minPrefixLength: 3 };
+export const QUERY_LIMITS = { maxLength: 2000, maxTerms: 100, maxDepth: 12, minPrefixLength: 3, maxPrefixTerms: 20 };
 
 /** Lowercase, Unicode-normalise, drop diacritics, split into letter/number tokens. */
 export function tokenize(text: string): string[] {
@@ -58,7 +58,7 @@ export function parseQuery(src: string): QueryNode {
   if (src.length > QUERY_LIMITS.maxLength) throw new QuerySyntaxError(`Expression is longer than ${QUERY_LIMITS.maxLength} characters`, QUERY_LIMITS.maxLength);
   const toks = lex(src);
   if (toks.length === 0) throw new QuerySyntaxError('Expression is empty', 0);
-  let p = 0; let terms = 0;
+  let p = 0; let terms = 0; let prefixes = 0;
   const peek = () => toks[p];
   const fail = (msg: string): never => { throw new QuerySyntaxError(msg, peek()?.pos ?? src.length); };
 
@@ -80,7 +80,11 @@ export function parseQuery(src: string): QueryNode {
   };
   const unary = (depth: number): QueryNode => {
     const t = peek();
-    if (t?.kind === 'not') { p++; return { type: 'not', child: unary(depth + 1) }; }
+    if (t?.kind === 'not') {
+      // NOT chains count towards the nesting limit like parentheses do.
+      if (depth + 1 > QUERY_LIMITS.maxDepth) fail(`Expression is nested more than ${QUERY_LIMITS.maxDepth} levels`);
+      p++; return { type: 'not', child: unary(depth + 1) };
+    }
     return primary(depth);
   };
   const primary = (depth: number): QueryNode => {
@@ -109,6 +113,7 @@ export function parseQuery(src: string): QueryNode {
     if (prefix && (tokens.length !== 1 || tokens[0]!.length < QUERY_LIMITS.minPrefixLength)) {
       fail(`Wildcard terms need at least ${QUERY_LIMITS.minPrefixLength} characters before *`);
     }
+    if (prefix && ++prefixes > QUERY_LIMITS.maxPrefixTerms) fail(`Expression has more than ${QUERY_LIMITS.maxPrefixTerms} wildcard terms`);
     if (tokens.length > 1) return { type: 'phrase', tokens }; // e.g. hyphenated words: "e-ktp" → phrase e ktp
     return { type: 'term', value: tokens[0]!, prefix };
   };
@@ -124,10 +129,15 @@ export class MatchDocument {
   private readonly set: Set<string>;
   constructor(text: string) { this.tokens = tokenize(text); this.set = new Set(this.tokens); }
 
+  private sorted: string[] | null = null;
+  /** Prefix lookup is a binary search over the sorted distinct tokens (a linear scan made long documents × many
+   *  wildcard terms cost seconds of CPU per document). */
   hasTerm(t: string, prefix: boolean): boolean {
     if (!prefix) return this.set.has(t);
-    for (const tok of this.set) if (tok.startsWith(t)) return true;
-    return false;
+    const s = (this.sorted ??= [...this.set].sort());
+    let lo = 0; let hi = s.length;
+    while (lo < hi) { const mid = (lo + hi) >>> 1; if (s[mid]! < t) lo = mid + 1; else hi = mid; }
+    return lo < s.length && s[lo]!.startsWith(t);
   }
   hasPhrase(phrase: string[]): boolean {
     if (phrase.length === 0) return false;

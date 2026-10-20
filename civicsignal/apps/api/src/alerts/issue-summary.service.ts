@@ -34,7 +34,7 @@ export class IssueSummaryService {
         const res = await this.provider.summarize({ scope: 'issue', language: records[0]!.language === 'en' ? 'en' : 'id',
           records: records.map((r, i) => ({ ref: `R${i + 1}`, publisher: r.publisher, published: r.published_at?.toISOString() ?? null, title: r.title, excerpt: r.excerpt, syndicated: r.is_syndicated })) });
         if (res) {
-          const s = sanitizeMultiSummary(res.output, refs);
+          const s = sanitizeMultiSummary(res.output, refs, new Map(records.map((r) => [r.id, `${r.title}\n${r.excerpt ?? ''}`])));
           summary = { method: 'llm', provider: this.provider.name, model: res.model, promptVersion: res.promptVersion, status: s.status, headline: s.headline,
             claims: s.claims, conflicts: s.conflicts, uncertainty: s.uncertainty, generatedAt: now.toISOString() };
           await this.db.withTenant(tenantId, SYS, (c) => recordAiUsage(c, tenantId, this.provider.name, res.model, 'issue-summary', res.usage, {}));

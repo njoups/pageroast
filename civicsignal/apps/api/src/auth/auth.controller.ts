@@ -158,7 +158,10 @@ export class AuthController {
   @UseGuards(SessionGuard)
   async me(@Auth() auth: AuthContext) {
     const organizations = await this.db.withUser(auth.userId, async (c) => (await c.query(
-      `SELECT t.id, t.name, t.slug, m.role FROM memberships m JOIN tenants t ON t.id = m.tenant_id
+      // Only display settings the UI needs (time zone for dates, brand colour); never the whole settings object.
+      `SELECT t.id, t.name, t.slug, m.role,
+         jsonb_strip_nulls(jsonb_build_object('timezone', t.settings->>'timezone', 'brandColor', t.settings->>'brandColor')) AS settings
+       FROM memberships m JOIN tenants t ON t.id = m.tenant_id
        WHERE m.user_id = $1 AND t.archived_at IS NULL ORDER BY t.name`, [auth.userId])).rows);
     return {
       user: { id: auth.userId, email: auth.email, displayName: auth.displayName, isPlatformAdmin: auth.isPlatformAdmin },

@@ -47,9 +47,13 @@ export async function resolveScope(c: PoolClient, viewer: Viewer, q: AnalyticsPa
   if (q.projectId && !visible.includes(q.projectId)) throw notFound('Project');
   const projects = q.projectId ? [q.projectId] : visible;
   // Default end: the next whole minute, so dashboards polling within a minute share one cache entry.
-  const to = q.to ? new Date(q.to) : new Date(Math.ceil(o.now.getTime() / 60_000) * 60_000);
+  // Date-only bounds are calendar days in the tenant time zone: `from` is that day's local midnight and a date-only
+  // `to` includes its whole day (ends at the next local midnight). Timestamps keep their exact, half-open meaning.
+  const DAY = /^\d{4}-\d{2}-\d{2}$/;
+  const localMidnight = (s: string, plusDays = 0) => { const [y, m, d] = s.split('-').map(Number) as [number, number, number]; const n = addDays(y, m, d, plusDays); return zonedToUtc(n.y, n.m, n.d, 0, 0, tz); };
+  const to = q.to ? (DAY.test(q.to) ? localMidnight(q.to, 1) : new Date(q.to)) : new Date(Math.ceil(o.now.getTime() / 60_000) * 60_000);
   let from: Date;
-  if (q.from) from = new Date(q.from);
+  if (q.from) from = DAY.test(q.from) ? localMidnight(q.from) : new Date(q.from);
   else {
     const p = localParts(to, tz); const s = addDays(p.y, p.m, p.d, -((q.days ?? 30) - 1));
     from = zonedToUtc(s.y, s.m, s.d, 0, 0, tz);

@@ -37,6 +37,7 @@ export function assertFetchableUrl(raw: string, opts: { allowPrivateHosts?: bool
 export function canonicalizeUrl(raw: string): string {
   const u = new URL(raw.trim());
   u.hash = '';
+  u.username = ''; u.password = '';      // credentials in a link are never stored or shown
   u.hostname = u.hostname.toLowerCase().replace(/\.$/, '');
   if ((u.protocol === 'https:' && u.port === '443') || (u.protocol === 'http:' && u.port === '80')) u.port = '';
   const kept = [...u.searchParams.entries()].filter(([k]) => !TRACKING_PARAMS.test(k)).sort(([a, av], [b, bv]) => (a === b ? av.localeCompare(bv) : a.localeCompare(b)));

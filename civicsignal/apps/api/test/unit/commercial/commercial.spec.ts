@@ -6,7 +6,7 @@ import { addMonths, usagePeriod } from '../../../src/commercial/periods';
 import { decide, type Entitlements } from '../../../src/commercial/quota';
 
 const ent = (quotas: Partial<Entitlements['quotas']>): Entitlements => ({
-  tenantId: 't', subscription: null, access: 'full', settings: {}, timezone: 'Asia/Jakarta', period: { start: new Date(0), end: new Date(1) },
+  tenantId: 't', subscription: null, access: 'full', settings: {}, timezone: 'Asia/Jakarta', periodTimezone: 'Asia/Jakarta', period: { start: new Date(0), end: new Date(1) },
   features: Object.fromEntries(FEATURE_KEYS.map((k) => [k, true])) as Entitlements['features'],
   quotas: { ...Object.fromEntries(METRIC_KEYS.map((m) => [m, { limit: null, enforcement: 'none', overage: 'allow', source: 'not_in_plan' }])), ...quotas } as Entitlements['quotas'],
 });

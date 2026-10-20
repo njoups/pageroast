@@ -130,9 +130,10 @@ export async function alertsSchedulerTick(db: Database, enqueuer: AlertsEnqueuer
   const due = await db.withSystem(async (c) => (await c.query<{ id: string; tenant_id: string; attempts: number; kind: string }>(
     `SELECT id, tenant_id, attempts, 'n' AS kind FROM notification_deliveries
        WHERE channel <> 'in_app' AND ((status = 'pending' AND created_at < now() - interval '2 minutes') OR (status = 'deferred' AND not_before <= now())
-         OR (status = 'sending' AND created_at < now() - interval '15 minutes'))
+         OR (status = 'sending' AND claimed_at < now() - interval '15 minutes'))
      UNION ALL
-     SELECT id, tenant_id, attempts, 'w' FROM webhook_deliveries WHERE status = 'pending' AND created_at < now() - interval '2 minutes'
+     SELECT id, tenant_id, attempts, 'w' FROM webhook_deliveries WHERE (status = 'pending' AND created_at < now() - interval '2 minutes')
+       OR (status = 'sending' AND claimed_at < now() - interval '15 minutes')
      LIMIT 500`)).rows);
   for (const r of due) {
     await enqueuer.deliveries(r.tenant_id, r.kind === 'n' ? [r.id] : [], r.kind === 'w' ? [r.id] : [], r.attempts + 1);

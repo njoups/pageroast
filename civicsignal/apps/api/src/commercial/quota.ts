@@ -22,6 +22,8 @@ export interface Entitlements {
   quotas: Record<Metric, EffectiveQuota>;
   settings: PlanSettings;
   timezone: string;
+  /** Time zone of the usage periods (frozen with the anchor). */
+  periodTimezone: string;
   period: UsagePeriod;
 }
 
@@ -29,12 +31,15 @@ export const commercialError = (code: 'quota_exceeded' | 'feature_not_in_plan' |
   new AppError(402, code, message, details);
 
 export async function loadEntitlements(c: PoolClient, tenantId: string, now = new Date()): Promise<Entitlements> {
-  const s = (await c.query(`SELECT s.id, s.status, s.billing_mode, s.trial_ends_at, s.current_period_start, s.current_period_end, s.cancel_at_period_end, s.usage_anchor,
+  const s = (await c.query(`SELECT s.id, s.status, s.billing_mode, s.trial_ends_at, s.current_period_start, s.current_period_end, s.cancel_at_period_end, s.usage_anchor, s.usage_timezone,
       pv.id AS pv_id, pv.version, pv.features, pv.quotas, pv.settings, p.code, p.name, t.settings->>'timezone' AS tz
     FROM tenants t LEFT JOIN subscriptions s ON s.tenant_id = t.id AND s.ended_at IS NULL
       LEFT JOIN plan_versions pv ON pv.id = s.plan_version_id LEFT JOIN plans p ON p.id = pv.plan_id
     WHERE t.id = $1`, [tenantId])).rows[0];
   const timezone = s?.tz || 'Asia/Jakarta';
+  // Usage periods use the time zone frozen when the anchor was set, so changing the organization's time zone cannot
+  // move the current period (which would start a fresh, empty period and reset every counter).
+  const periodTz: string = s?.usage_timezone || timezone;
   const overrides = (await c.query<{ metric: string; quota_limit: string | null; enforcement: 'hard' | 'soft' }>(
     `SELECT metric, quota_limit, enforcement FROM quota_overrides WHERE tenant_id = $1 AND revoked_at IS NULL AND (expires_at IS NULL OR expires_at > $2)`, [tenantId, now])).rows;
   const planQuotas = (s?.quotas ?? {}) as Record<string, QuotaSpec>;
@@ -50,12 +55,13 @@ export async function loadEntitlements(c: PoolClient, tenantId: string, now = ne
   const f = (s?.features ?? {}) as Record<string, boolean>;
   const features = Object.fromEntries(FEATURE_KEYS.map((k) => [k, k === 'api_access' ? false : f[k] === true])) as Record<Feature, boolean>;
   const status = (s?.status ?? null) as SubStatus | null;
-  const anchor: Date = s?.usage_anchor ?? now;
+  // Without a subscription, usage still falls into stable calendar months (not a new period per request).
+  const anchor: Date = s?.usage_anchor ?? new Date(Date.UTC(2000, 0, 1, 0, 0));
   return {
     tenantId,
     subscription: s?.id ? { id: s.id, status: s.status, planCode: s.code, planName: s.name, planVersionId: s.pv_id, version: s.version, billingMode: s.billing_mode,
       trialEndsAt: s.trial_ends_at, currentPeriodStart: s.current_period_start, currentPeriodEnd: s.current_period_end, cancelAtPeriodEnd: s.cancel_at_period_end, usageAnchor: anchor } : null,
-    access: accessFor(status), features, quotas, settings: (s?.settings ?? {}) as PlanSettings, timezone, period: usagePeriod(anchor, now, timezone),
+    access: accessFor(status), features, quotas, settings: (s?.settings ?? {}) as PlanSettings, timezone, periodTimezone: periodTz, period: usagePeriod(anchor, now, periodTz),
   };
 }
 
@@ -154,7 +160,9 @@ export async function consume(c: PoolClient, tenantId: string, ev: UsageEvent, o
   if (!/^[A-Za-z0-9._:@/-]{3,200}$/.test(ev.idempotencyKey)) throw new Error('invalid usage idempotency key');
   const occurredAt = ev.occurredAt ?? new Date();
   const ent = opts.ent ?? await loadEntitlements(c, tenantId, occurredAt);
-  const period = ent.subscription ? usagePeriod(ent.subscription.usageAnchor, occurredAt, ent.timezone) : ent.period;
+  const period = usagePeriod(ent.subscription?.usageAnchor ?? new Date(Date.UTC(2000, 0, 1)), occurredAt, ent.periodTimezone);
+  // Shared with other consumers; exclusive for reconciliation, which must not recompute while a consumer is mid-write.
+  await usageLock(c, tenantId, 'shared');
   const dup = (await c.query('SELECT 1 FROM usage_records WHERE tenant_id = $1 AND metric = $2 AND idempotency_key = $3', [tenantId, ev.metric, ev.idempotencyKey])).rowCount;
   if (dup) return { recorded: false, duplicate: true, decision: decide(ent, ev.metric, await counterUsage(c, tenantId, ev.metric, period), 0), notices: [] };
   // Lock (creating if needed) the period total: concurrent consumers of this metric serialise here.
@@ -208,7 +216,12 @@ export async function gaugeNotices(c: PoolClient, ent: Entitlements, metric: Met
 }
 
 /** Recomputes the period totals and daily aggregates of one tenant from the ledger (reconciliation; repairs drift). */
+const usageLock = (c: PoolClient, tenantId: string, mode: 'shared' | 'exclusive') =>
+  c.query(mode === 'shared' ? 'SELECT pg_advisory_xact_lock_shared(hashtext($1))' : 'SELECT pg_advisory_xact_lock(hashtext($1))', [`usage:${tenantId}`]);
+
 export async function reconcileAggregates(c: PoolClient, tenantId: string): Promise<{ periodRowsFixed: number; dailyRowsFixed: number }> {
+  // Waits for in-flight consumers to commit and keeps new ones out; the sums below then read a snapshot taken after that.
+  await usageLock(c, tenantId, 'exclusive');
   const p = await c.query(`WITH l AS (SELECT metric, usage_period_start AS ps, sum(quantity) AS q FROM usage_records WHERE tenant_id = $1 AND usage_period_start IS NOT NULL GROUP BY 1, 2)
     UPDATE usage_period_totals t SET quantity = l.q, updated_at = now() FROM l WHERE t.tenant_id = $1 AND t.metric = l.metric AND t.period_start = l.ps AND t.quantity <> l.q RETURNING 1`, [tenantId]);
   const d = await c.query(`WITH l AS (SELECT metric, period_start AS day, sum(quantity) AS q, count(*) AS n FROM usage_records WHERE tenant_id = $1 AND usage_period_start IS NOT NULL GROUP BY 1, 2)
@@ -220,19 +233,24 @@ export async function reconcileAggregates(c: PoolClient, tenantId: string): Prom
  * A traceable correction: a new ledger row (kind 'correction', possibly negative) referencing the corrected entry, with
  * a reason and the operator. The original row is never changed.
  */
-export async function correctUsage(c: PoolClient, tenantId: string, input: { correctsId: string; quantity: number; reason: string; userId: string }) {
+export async function correctUsage(c: PoolClient, tenantId: string, input: { correctsId: string; quantity: number; reason: string; userId: string; idempotencyKey?: string }) {
+  await usageLock(c, tenantId, 'exclusive');   // serialises corrections of the same entry (the check below sees earlier ones)
   const orig = (await c.query<{ id: string; metric: Metric; quantity: string; usage_period_start: Date | null; occurred_at: Date; period_start: string }>(
-    'SELECT id, metric, quantity, usage_period_start, occurred_at, period_start FROM usage_records WHERE tenant_id = $1 AND id = $2', [tenantId, input.correctsId])).rows[0];
+    'SELECT id, metric, quantity, usage_period_start, occurred_at, period_start FROM usage_records WHERE tenant_id = $1 AND id = $2 AND kind = $3', [tenantId, input.correctsId, 'usage'])).rows[0];
   if (!orig) return null;
   if (!orig.usage_period_start) throw new AppError(409, 'legacy_record', 'Legacy usage records (before plans existed) are not part of any usage period and cannot be corrected');
-  if (Number(orig.quantity) + input.quantity < 0) throw new AppError(400, 'validation_failed', 'A correction cannot make the corrected entry negative');
+  const key = `correction:${orig.id}:${input.idempotencyKey ?? Date.now()}`;
+  const replay = (await c.query('SELECT id, metric, quantity, usage_period_start, recorded_at FROM usage_records WHERE tenant_id = $1 AND metric = $2 AND idempotency_key = $3', [tenantId, orig.metric, key])).rows[0];
+  if (replay) return replay;
+  const corrected = Number((await c.query<{ q: string }>('SELECT coalesce(sum(quantity), 0) AS q FROM usage_records WHERE tenant_id = $1 AND corrects_id = $2', [tenantId, orig.id])).rows[0]!.q);
+  if (Number(orig.quantity) + corrected + input.quantity < 0) throw new AppError(400, 'validation_failed', 'A correction cannot make the corrected entry negative (earlier corrections included)');
   const ent = await loadEntitlements(c, tenantId, orig.occurred_at);
-  const period = usagePeriod(ent.subscription?.usageAnchor ?? orig.occurred_at, orig.occurred_at, ent.timezone);
+  const period = usagePeriod(ent.subscription?.usageAnchor ?? new Date(Date.UTC(2000, 0, 1)), orig.occurred_at, ent.periodTimezone);
   await c.query(`INSERT INTO usage_period_totals (tenant_id, metric, period_start, period_end) VALUES ($1,$2,$3,$4) ON CONFLICT DO NOTHING`, [tenantId, orig.metric, orig.usage_period_start, period.end]);
   await c.query('SELECT 1 FROM usage_period_totals WHERE tenant_id = $1 AND metric = $2 AND period_start = $3 FOR UPDATE', [tenantId, orig.metric, orig.usage_period_start]);
   const r = (await c.query(`INSERT INTO usage_records (tenant_id, metric, quantity, period_start, usage_period_start, occurred_at, idempotency_key, source, kind, measurement, corrects_id, reason, recorded_by, subscription_id)
     VALUES ($1,$2,$3,$4,$5,$6,$7,'correction','correction','confirmed',$8,$9,$10,$11) RETURNING id, metric, quantity, usage_period_start, recorded_at`,
-    [tenantId, orig.metric, input.quantity, orig.period_start, orig.usage_period_start, orig.occurred_at, `correction:${orig.id}:${Date.now()}`, orig.id, input.reason, input.userId, ent.subscription?.id ?? null])).rows[0];
+    [tenantId, orig.metric, input.quantity, orig.period_start, orig.usage_period_start, orig.occurred_at, key, orig.id, input.reason, input.userId, ent.subscription?.id ?? null])).rows[0];
   await applyAggregates(c, tenantId, orig.metric, input.quantity, { start: orig.usage_period_start, end: period.end }, orig.period_start);
   return r;
 }

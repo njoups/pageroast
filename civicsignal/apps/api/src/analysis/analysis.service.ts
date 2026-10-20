@@ -57,7 +57,9 @@ export class AnalysisService {
       const claimed = (await c.query<{ mention_id: string }>(
         // Also reclaims a row left 'running' by a crashed earlier attempt (a later attempt number), or abandoned for
         // longer than any analysis can take (a stalled job redelivered with the same attempt number).
-        `UPDATE mention_analyses SET status = 'running', attempt = $2, started_at = coalesce(started_at, now()), error = NULL
+        // started_at is reset on every claim, so the 15-minute guard measures this attempt, not the first one: a stalled
+        // redelivery with the same attempt number cannot claim a row whose attempt is still running.
+        `UPDATE mention_analyses SET status = 'running', attempt = $2, started_at = now(), error = NULL
          WHERE id = $1 AND (status IN ('queued','retrying')
            OR (status = 'running' AND finished_at IS NULL AND (attempt < $2 OR started_at < now() - interval '15 minutes')))
          RETURNING mention_id`, [analysisId, attempt])).rows[0];
@@ -120,10 +122,14 @@ export class AnalysisService {
 
     // 3–6. Entities, topics, sentiment, summary (one structured provider call)
     let result: ProviderResult<ArticleAnalysis>; let used = planBaseline ? this.fallback : this.provider; let fallbackReason: string | null = planBaseline ? `plan: ${q.llmBlocked}` : null;
+    // Provider spend is recorded in its own transaction as soon as it happens, so a later rollback (persist failure) or a
+    // rejected answer (refusal, truncation, invalid output) can never hide tokens from the caps, the plan quota or costs.
+    const spend = (usage: typeof NO_USAGE, model: string) => this.db.withTenant(tenantId, SYS, (c) => recordAiUsage(c, tenantId, this.provider.name, model, 'article-analysis', usage, { analysisId }));
     try {
       result = await used.analyzeArticle({ title: m.title, excerpt, body: m.body, publisher: m.publisher, language: lang.language, customTopics: custom, record });
     } catch (e) {
       const err = e instanceof ProviderError ? e : new ProviderError('network', (e as Error).message);
+      if (err.opts.usage) await spend(err.opts.usage, err.opts.model ?? this.provider.model).catch((x: Error) => logEvent('error', 'analysis.usage_record_failed', { tenantId, analysisId, message: x.message }));
       if (err.retryable && !isFinalAttempt) {
         await this.db.withTenant(tenantId, SYS, async (c) => {
           await c.query(`UPDATE mention_analyses SET status = 'retrying', error = $2 WHERE id = $1`, [analysisId, JSON.stringify({ kind: err.kind, message: err.message, attempt })]);
@@ -150,6 +156,7 @@ export class AnalysisService {
     stages.entities = `${analysis.entities.length}`; stages.topics = analysis.topics.map((t) => t.key).join(',');
     stages.sentiment = analysis.sentiment.label; stages.summary = analysis.summary.status;
 
+    const usage = used.method === 'baseline' ? null : await spend(result.usage, result.model);
     // 7–8. Persist, then cluster in the same transaction
     const status = fallbackReason ? 'partial' : 'succeeded';
     const out = await this.db.withTenant(tenantId, SYS, async (c) => {
@@ -158,7 +165,6 @@ export class AnalysisService {
       await this.clusters.detach(c, tenantId, m.id);
       const cl = await this.clusters.assign(c, tenantId, m.id);
       stages.cluster = cl.action; stages.analytics = 'ok:aggregated_by_alert_evaluation'; stages.alerts = 'evaluation_queued_by_worker';
-      const usage = used.method === 'baseline' ? null : await recordAiUsage(c, tenantId, used.name, result.model, 'article-analysis', result.usage, { analysisId });
       await this.finish(tenantId, analysisId, m.id, status, {
         stages: { ...stages, sanitize: summarizeReport(report), ...(fallbackReason ? { fallbackReason: fallbackReason.slice(0, 200) } : {}) },
         lang, contentStatus, provider: used, model: result.model, promptVersion: result.promptVersion, usage: result.usage, cost: usage?.cost ?? null, currency: usage?.currency ?? null,
@@ -193,6 +199,9 @@ export class AnalysisService {
     for (const a of [name, ...aliases]) {
       const na = normalizeName(a);
       if (!na) continue;
+      // An alias may never capture the name of a different existing entity (a model-supplied alias such as "KPK" on
+      // another organisation would otherwise redirect every later "KPK" mention).
+      if (na !== n && (await c.query('SELECT 1 FROM entities WHERE entity_type = $1 AND normalized_name = $2 AND id <> $3', [type, na, id])).rowCount) continue;
       await c.query(`INSERT INTO entity_aliases (tenant_id, entity_id, entity_type, alias, normalized_alias) VALUES ($1,$2,$3,$4,$5)
         ON CONFLICT (tenant_id, entity_type, normalized_alias) DO NOTHING`, [tenantId, id, type, a.slice(0, 200), na]);
     }
@@ -250,7 +259,11 @@ export class AnalysisService {
     provider?: AnalysisProvider; model?: string; promptVersion?: string; usage?: typeof NO_USAGE; cost?: number | null; currency?: string | null; durationMs?: number;
   }, client?: PoolClient) {
     const work = async (c: PoolClient) => {
-      const current = status === 'succeeded' || status === 'partial';
+      // An older analysis that finishes late (e.g. a retry after a long provider back-off) never replaces a newer current one.
+      const newer = (status === 'succeeded' || status === 'partial') && (await c.query(
+        `SELECT 1 FROM mention_analyses o, mention_analyses me WHERE me.id = $2 AND o.mention_id = $1 AND o.id <> $2 AND o.is_current AND o.queued_at > me.queued_at`,
+        [mentionId, analysisId])).rowCount;
+      const current = (status === 'succeeded' || status === 'partial') && !newer;
       if (current) await c.query('UPDATE mention_analyses SET is_current = false WHERE mention_id = $1 AND is_current AND id <> $2', [mentionId, analysisId]);
       await c.query(
         `UPDATE mention_analyses SET status = $2, finished_at = now(), stages = $3, language = $4, language_confidence = $5, language_method = $6, content_status = $7,
@@ -267,7 +280,8 @@ export class AnalysisService {
         `UPDATE mentions SET processing_status = $2, detected_language = coalesce($3, detected_language), language_confidence = $4, language_method = coalesce($5, language_method),
            analysis_id = CASE WHEN $6 THEN $7::uuid ELSE analysis_id END, analyzed_at = CASE WHEN $6 THEN now() ELSE analyzed_at END WHERE id = $1`,
         [mentionId, mentionStatus, d.lang?.language ?? null, d.lang?.confidence ?? null, d.lang?.method ?? null, current, analysisId]);
-      if (current) await consume(c, tenantId, { metric: 'ai_analyses', quantity: 1, idempotencyKey: `analysis:${analysisId}`, source: d.provider?.method === 'baseline' ? 'baseline' : 'llm', metadata: { method: d.provider?.method ?? null } });
+      // Work done is metered even when a newer analysis already exists.
+      if (status === 'succeeded' || status === 'partial') await consume(c, tenantId, { metric: 'ai_analyses', quantity: 1, idempotencyKey: `analysis:${analysisId}`, source: d.provider?.method === 'baseline' ? 'baseline' : 'llm', metadata: { method: d.provider?.method ?? null } });
     };
     if (client) return work(client);
     return this.db.withTenant(tenantId, SYS, work);

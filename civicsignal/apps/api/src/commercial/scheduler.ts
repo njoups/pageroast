@@ -89,13 +89,13 @@ export async function commercialTick(db: Database, config: AppConfig, now = new 
 
   // 6. Contract terms: renewal due 30 days before the end; expired after the end plus the plan's grace days.
   r.renewalDue = await each(await candidates(`SELECT s.tenant_id FROM subscriptions s JOIN contracts k ON k.id = s.contract_id
-      WHERE s.status = 'active' AND s.ended_at IS NULL AND k.status = 'active' AND k.end_date <= ($1::timestamptz + make_interval(days => ${RENEWAL_NOTICE_DAYS}))::date LIMIT 500`), async (c, sub) => {
+      WHERE s.status = 'active' AND s.ended_at IS NULL AND s.billing_mode = 'contract' AND k.status = 'active' AND k.end_date <= ($1::timestamptz + make_interval(days => ${RENEWAL_NOTICE_DAYS}))::date LIMIT 500`), async (c, sub) => {
     if (sub.status !== 'active') return false;
     await transition(c, sub, 'renewal_due', SYSTEM);
     return true;
   });
   r.termExpired = await each(await candidates(`SELECT s.tenant_id FROM subscriptions s JOIN contracts k ON k.id = s.contract_id JOIN plan_versions pv ON pv.id = s.plan_version_id
-      WHERE s.status IN ('pending_renewal','past_due','suspended') AND s.ended_at IS NULL
+      WHERE s.status IN ('pending_renewal','past_due','suspended') AND s.ended_at IS NULL AND s.billing_mode = 'contract'
         AND k.end_date + coalesce((pv.settings->>'past_due_grace_days')::int, 14) < $1::date LIMIT 500`), async (c, sub) => {
     if (!nextStatus(sub.status, 'term_expired')) return false;
     await transition(c, sub, 'term_expired', SYSTEM);
@@ -103,26 +103,36 @@ export async function commercialTick(db: Database, config: AppConfig, now = new 
     return true;
   });
 
-  // 7. Usage threshold notices by email to owners and admins (each notice once; stored in-app regardless).
-  const pending = await db.withSystem(async (c) => (await c.query<{ id: string; tenant_id: string; metric: string; threshold: number; message: string; tenant_name: string }>(
-    `SELECT n.id, n.tenant_id, n.metric, n.threshold, n.message, t.name AS tenant_name FROM usage_notices n JOIN tenants t ON t.id = n.tenant_id
-     WHERE n.email_status = 'pending' ORDER BY n.created_at LIMIT 200`)).rows);
-  for (const n of pending) {
-    await db.withTenant(n.tenant_id, SYS, async (c) => {
-      if (!email.configured) { await c.query(`UPDATE usage_notices SET email_status = 'not_configured' WHERE id = $1`, [n.id]); return; }
-      const to = (await c.query<{ email: string }>(`SELECT u.email FROM memberships m JOIN users u ON u.id = m.user_id WHERE m.role IN ('owner','admin')`)).rows;
-      const label = isMetric(n.metric) ? METRICS[n.metric].label : n.metric;
-      let ok = 0;
-      for (const u of to) {
-        try {
-          await email.send({ to: u.email, subject: `[CivicSignal] ${label}: ${n.threshold}% of plan limit — ${n.tenant_name}`, text: `${n.message}\n\nBilling and usage: ${config.appBaseUrl}/o/${n.tenant_id}/billing`,
-            html: `<p>${escapeHtml(n.message)}</p><p><a href="${config.appBaseUrl}/o/${n.tenant_id}/billing">Billing and usage</a></p>` });
-          ok++;
-        } catch (e) { logEvent('warn', 'commercial.notice_email_failed', { tenantId: n.tenant_id, message: (e as Error).message }); }
-      }
-      await c.query(`UPDATE usage_notices SET email_status = $2, emailed_at = CASE WHEN $2 = 'sent' THEN now() ELSE NULL END WHERE id = $1`, [n.id, ok > 0 ? 'sent' : 'failed']);
-      if (ok) r.noticesEmailed++;
-    });
+  // 7. Usage threshold notices by email to owners and admins (each notice once; stored in-app regardless). Each notice is
+  //    claimed (pending → sending) in its own committed statement before any email is sent, so concurrent workers never
+  //    send the same notice; a claim older than 15 minutes (crashed worker) can be taken again.
+  const pending = await db.withSystem(async (c) => (await c.query<{ id: string; tenant_id: string }>(
+    `SELECT id, tenant_id FROM usage_notices WHERE email_status = 'pending' OR (email_status = 'sending' AND email_claimed_at < $1::timestamptz - interval '15 minutes')
+     ORDER BY created_at LIMIT 200`, [now])).rows);
+  for (const p of pending) {
+    try {
+      const n = await db.withTenant(p.tenant_id, SYS, async (c) => (await c.query<{ id: string; tenant_id: string; metric: string; threshold: number; message: string }>(
+        `UPDATE usage_notices SET email_status = 'sending', email_claimed_at = now() WHERE id = $1
+           AND (email_status = 'pending' OR (email_status = 'sending' AND email_claimed_at < now() - interval '15 minutes'))
+         RETURNING id, tenant_id, metric, threshold, message`, [p.id])).rows[0]);
+      if (!n) continue;                                   // another worker claimed it
+      await db.withTenant(n.tenant_id, SYS, async (c) => {
+        if (!email.configured) { await c.query(`UPDATE usage_notices SET email_status = 'not_configured' WHERE id = $1`, [n.id]); return; }
+        const tenantName = (await c.query<{ name: string }>('SELECT name FROM tenants WHERE id = $1', [n.tenant_id])).rows[0]?.name ?? '';
+        const to = (await c.query<{ email: string }>(`SELECT u.email FROM memberships m JOIN users u ON u.id = m.user_id WHERE m.role IN ('owner','admin') AND u.disabled_at IS NULL`)).rows;
+        const label = isMetric(n.metric) ? METRICS[n.metric].label : n.metric;
+        let ok = 0;
+        for (const u of to) {
+          try {
+            await email.send({ to: u.email, subject: `[CivicSignal] ${label}: ${n.threshold}% of plan limit — ${tenantName}`, text: `${n.message}\n\nBilling and usage: ${config.appBaseUrl}/o/${n.tenant_id}/billing`,
+              html: `<p>${escapeHtml(n.message)}</p><p><a href="${config.appBaseUrl}/o/${n.tenant_id}/billing">Billing and usage</a></p>` });
+            ok++;
+          } catch (e) { logEvent('warn', 'commercial.notice_email_failed', { tenantId: n.tenant_id, message: (e as Error).message }); }
+        }
+        await c.query(`UPDATE usage_notices SET email_status = $2, emailed_at = CASE WHEN $2 = 'sent' THEN now() ELSE NULL END WHERE id = $1`, [n.id, ok > 0 ? 'sent' : 'failed']);
+        if (ok) r.noticesEmailed++;
+      });
+    } catch (e) { logEvent('error', 'commercial.tick_error', { tenantId: p.tenant_id, message: (e as Error).message }); }
   }
   return r;
 }

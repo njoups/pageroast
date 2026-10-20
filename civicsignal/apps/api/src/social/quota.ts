@@ -2,7 +2,8 @@ import type { PoolClient } from 'pg';
 import { randomUUID } from 'node:crypto';
 import { consume } from '../commercial/quota';
 import type { UsageReport } from '../ingestion/connectors/connector';
-import { youtubeQuotaDay } from '../ingestion/connectors/youtube.connector';
+import { YOUTUBE_QUOTA_TZ, youtubeQuotaDay } from '../ingestion/connectors/youtube.connector';
+import { zonedToUtc } from '../analytics/tz';
 import { providerForKind } from './providers';
 
 /**
@@ -160,5 +161,9 @@ export async function pauseConnector(c: PoolClient, x: { tenantId: string; conne
 export function budgetPeriodEnd(kind: string, period: 'day' | 'month', now = new Date()): Date {
   const pd = providerDay(kind, now);
   if (period === 'day') return pd.resetsAt ?? new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate() + 1));
-  return new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() + 1, 1));
+  // Month of the provider day (usage is bucketed by provider day): the pause ends at the provider's next month, not the
+  // next UTC month, otherwise the first check after the pause still sees the old month and pauses for another month.
+  const [y, m] = pd.day.split('-').map(Number) as [number, number];
+  if (kind === 'youtube') return zonedToUtc(m === 12 ? y + 1 : y, m === 12 ? 1 : m + 1, 1, 0, 0, YOUTUBE_QUOTA_TZ);
+  return new Date(Date.UTC(y, m, 1));
 }

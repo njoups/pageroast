@@ -67,7 +67,7 @@ export class SummariesService {
       records: data.map((r, i) => ({ ref: `R${i + 1}`, publisher: r.publisher ?? r.publisher_domain, published: r.published_at?.toISOString() ?? null, title: r.title, excerpt: r.excerpt, syndicated: r.is_syndicated })),
     });
     if (!res) return 'insufficient';
-    const s = sanitizeMultiSummary(res.output, refs);
+    const s = sanitizeMultiSummary(res.output, refs, new Map(data.map((r) => [r.id, `${r.title}\n${r.excerpt ?? ''}`])));
     return this.db.withTenant(tenantId, SYS, async (c) => {
       const ins = await c.query<{ id: string }>(
         `INSERT INTO ai_summaries (tenant_id, scope, cluster_id, status, summary_text, claims, conflicts, uncertainty_notes, supporting_mention_ids, method, provider, model, prompt_version, tokens_in, tokens_out, generated_at, is_current)
@@ -123,7 +123,7 @@ export class SummariesService {
         const refs = new Map(records.map((r, i) => [`R${i + 1}`, r.id]));
         const res = await this.provider.summarize({ scope: s.scope as 'project' | 'period', language: 'id',
           records: records.map((r, i) => ({ ref: `R${i + 1}`, publisher: r.publisher ?? r.publisher_domain, published: r.published_at?.toISOString() ?? null, title: r.title, excerpt: r.excerpt, syndicated: false })) });
-        if (res) llm = { s: sanitizeMultiSummary(res.output, refs), model: res.model, promptVersion: res.promptVersion, usage: res.usage };
+        if (res) llm = { s: sanitizeMultiSummary(res.output, refs, new Map(records.map((r) => [r.id, `${r.title}\n${r.excerpt ?? ''}`]))), model: res.model, promptVersion: res.promptVersion, usage: res.usage };
       } catch (e) { logEvent('warn', 'analysis.summary_llm_failed', { tenantId, summaryId, message: (e as Error).message }); }
     }
     const allIds = records.map((r) => r.id);

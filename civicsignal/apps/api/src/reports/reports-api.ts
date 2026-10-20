@@ -11,7 +11,7 @@ import { previousPeriod, isValidTimeZone, nextRunAt, type Frequency } from '../a
 import { AuditService } from '../audit/audit.service';
 import { SessionGuard } from '../auth/session.guard';
 import { RequirePermission, TenantGuard } from '../authz/guards';
-import { seesAllProjects } from '../authz/permissions';
+import { hasPermission, seesAllProjects } from '../authz/permissions';
 import { AppConfig, CONFIG } from '../config';
 import { AppError, badRequest, notFound } from '../common/errors';
 import { Auth, AuthContext, Meta, RequestMeta, Tenant, TenantContext } from '../common/request';
@@ -225,6 +225,9 @@ export class ReportsService {
   /** Authenticated download only: tenant (RLS) + project access + reports:read. Never a public or pre-signed URL. */
   async download(auth: AuthContext, t: TenantContext, id: string, format: string, meta: RequestMeta, res: Response) {
     if (format !== 'pdf' && format !== 'csv') throw notFound('Artifact');
+    // The CSV is a row-level export of collected articles (titles, URLs, entities, excerpts), so it needs data:export;
+    // the PDF report needs only reports:read.
+    if (format === 'csv' && !hasPermission(t.role, 'data:export')) throw new AppError(403, 'forbidden', 'Downloading the CSV export needs the data:export permission (owners and administrators)');
     const a = await this.db.withTenant(t.orgId, auth.userId, async (c) => {
       const run = await this.loadRun(c, auth, t, id);
       const u = await consume(c, t.orgId, { metric: 'exports', quantity: 1, idempotencyKey: `download:${id}:${format}:${randomUUID()}`, source: 'reports', projectId: run.project_id }, { enforce: true });

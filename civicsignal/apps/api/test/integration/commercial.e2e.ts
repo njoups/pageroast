@@ -264,7 +264,9 @@ describe('commercialization: plans, subscriptions, metering, billing (integratio
 
       const pay = (body: object) => asAdmin('post', `/tenants/${o}/invoices/${inv.id}/payments`).send({ reason: REASON, payment: { method: 'government_treasury', receivedAt: new Date().toISOString(), ...body } });
       await pay({ amount: 200000000, reference: 'SP2D-1' }).expect(400);                                    // overpayment
-      expect((await pay({ amount: 50000000, reference: 'SP2D-1' }).expect(201)).body.invoice.status).toBe('partially_paid');
+      // A partial payment on an overdue invoice keeps it overdue (it does not restart the dunning clock) (QA-BL-07).
+      expect((await pay({ amount: 50000000, reference: 'SP2D-1' }).expect(201)).body.invoice).toMatchObject({ status: 'overdue', amountPaid: 50000000 });
+      expect((await http().get(`/api/v1/organizations/${o}/billing`).set('Cookie', owner.cookie).expect(200)).body.subscription.status).toBe('suspended');
       await pay({ amount: 50000000, reference: 'SP2D-1' }).expect(409);                                     // same remittance twice
       expect((await pay({ amount: 61000000, reference: 'SP2D-2' }).expect(201)).body.invoice).toMatchObject({ status: 'paid', balance: 0 });
       b = (await http().get(`/api/v1/organizations/${o}/billing`).set('Cookie', owner.cookie).expect(200)).body;
@@ -355,8 +357,11 @@ describe('commercialization: plans, subscriptions, metering, billing (integratio
       expect(after.subscription.status).toBe('active');
       const invs = (await http().get(`/api/v1/organizations/${o}/billing/invoices`).set('Cookie', owner.cookie).expect(200)).body.invoices;
       expect(invs).toEqual([expect.objectContaining({ source: 'provider', status: 'paid', total: 1500000, amountPaid: 1500000 })]);
-      // Unknown sessions and event types are acknowledged and ignored.
-      expect((await send({ id: `evt_${randomUUID()}`, type: 'checkout.completed', created_at: new Date().toISOString(), data: { session: 'test_cs_unknown', customer: 'c', subscription: 's', ...period() } }).expect(200)).body.status).toBe('ignored');
+      // An unknown session may simply not be committed yet: the event fails retryably (5xx) and is kept for redelivery,
+      // instead of being acknowledged and lost (QA-BL-13). Unknown event types are acknowledged and ignored.
+      const unknownId = `evt_${randomUUID()}`;
+      await send({ id: unknownId, type: 'checkout.completed', created_at: new Date().toISOString(), data: { session: 'test_cs_unknown', customer: 'c', subscription: 's', ...period() } }).expect(500);
+      expect((await owner_db.query(`SELECT status FROM billing_webhook_events WHERE event_id = $1`, [unknownId])).rows[0].status).toBe('failed');
       expect((await send({ id: `evt_${randomUUID()}`, type: 'customer.updated', created_at: new Date().toISOString(), data: {} }).expect(200)).body.status).toBe('ignored');
       // Customer cancel goes to the provider first, then is scheduled for period end.
       expect((await http().post(`/api/v1/organizations/${o}/billing/cancel`).set('Cookie', owner.cookie).expect(200)).body).toMatchObject({ status: 'active', cancelAtPeriodEnd: true });

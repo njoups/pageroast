@@ -64,22 +64,30 @@ export class BillingWebhookService {
     }
   }
 
-  private async tenantBySubscriptionRef(ref: string) {
-    return this.db.withSystem(async (c) => (await c.query<{ tenant_id: string }>(
+  /**
+   * Organization owning a provider subscription reference. An unknown reference is a retryable failure, not "ignored":
+   * events can arrive before the event that creates the reference, and an ignored event would never be redelivered.
+   */
+  private async tenantBySubscriptionRef(ref: string): Promise<string> {
+    const t = await this.db.withSystem(async (c) => (await c.query<{ tenant_id: string }>(
       'SELECT tenant_id FROM subscriptions WHERE billing_provider = $1 AND billing_reference = $2 ORDER BY created_at DESC LIMIT 1', [this.provider.name, ref])).rows[0]?.tenant_id ?? null);
+    if (!t) throw new Error('unknown provider subscription reference (not yet recorded); retry later');
+    return t;
   }
 
   private async apply(ev: BillingEvent): Promise<WebhookOutcome & { tenantId?: string; status: 'processed' | 'ignored' }> {
     switch (ev.type) {
       case 'checkout.completed': {
-        const started = await this.db.withSystem(async (c) => (await c.query<{ tenant_id: string; metadata: { planVersionId: string } }>(
-          `SELECT tenant_id, metadata FROM subscription_events WHERE event = 'checkout_started' AND metadata->>'provider' = $1 AND metadata->>'sessionRef' = $2 LIMIT 1`,
-          [this.provider.name, ev.sessionRef])).rows[0]);
-        if (!started) return { status: 'ignored', detail: 'unknown checkout session' };
+        // Sessions are recorded before the provider is called and do not depend on a live subscription, so an expired or
+        // canceled organization can be reactivated by paying. Unknown sessions are retryable (the record may still be committing).
+        const started = await this.db.withSystem(async (c) => (await c.query<{ id: string; tenant_id: string; plan_version_id: string }>(
+          `SELECT id, tenant_id, plan_version_id FROM checkout_sessions WHERE provider = $1 AND session_ref = $2`, [this.provider.name, ev.sessionRef])).rows[0]);
+        if (!started) throw new Error('unknown checkout session (not yet recorded); retry later');
         return this.db.withTenant(started.tenant_id, SYS, async (c) => {
+          await c.query(`UPDATE checkout_sessions SET status = 'completed', completed_at = coalesce(completed_at, now()) WHERE id = $1`, [started.id]);
           const sub = await lockSubscription(c, started.tenant_id);
-          if (sub?.billing_reference === ev.subscriptionRef && sub.plan_version_id === started.metadata.planVersionId) return { status: 'ignored' as const, detail: 'already applied', tenantId: started.tenant_id };
-          const pv = await versionById(c, started.metadata.planVersionId);
+          if (sub?.billing_reference === ev.subscriptionRef && sub.plan_version_id === started.plan_version_id) return { status: 'ignored' as const, detail: 'already applied', tenantId: started.tenant_id };
+          const pv = await versionById(c, started.plan_version_id);
           if (!pv) return { status: 'ignored' as const, detail: 'plan version missing', tenantId: started.tenant_id };
           let s: SubscriptionRow;
           if (!sub) {
@@ -89,7 +97,7 @@ export class BillingWebhookService {
           } else {
             s = await changePlanNow(c, sub, pv.id, PROVIDER_ACTOR);
           }
-          await c.query(`UPDATE subscriptions SET billing_provider = $2, billing_reference = $3, provider_customer_ref = $4, billing_mode = 'self_service' WHERE id = $1`,
+          await c.query(`UPDATE subscriptions SET billing_provider = $2, billing_reference = $3, provider_customer_ref = $4, billing_mode = 'self_service', contract_id = NULL WHERE id = $1`,
             [s.id, this.provider.name, ev.subscriptionRef, ev.customerRef]);
           await this.audit.record(c, { tenantId: started.tenant_id, actorUserId: null, action: 'commercial.checkout_completed', targetType: 'subscription', targetId: s.id, metadata: { plan: pv.code, provider: this.provider.name } });
           return { status: 'processed' as const, tenantId: started.tenant_id };
@@ -97,29 +105,41 @@ export class BillingWebhookService {
       }
       case 'invoice.paid': case 'invoice.payment_failed': {
         const tenantId = await this.tenantBySubscriptionRef(ev.subscriptionRef);
-        if (!tenantId) return { status: 'ignored', detail: 'unknown subscription' };
         return this.db.withTenant(tenantId, SYS, async (c) => {
-          const sub = await lockSubscription(c, tenantId);
+          const cur = await lockSubscription(c, tenantId);
+          // Only the organization's *current* subscription is changed, and only when it is the one this provider
+          // reference belongs to; events for an ended provider subscription are mirrored but change nothing.
+          const sub = cur && cur.billing_provider === this.provider.name && cur.billing_reference === ev.subscriptionRef ? cur : null;
           const paid = ev.type === 'invoice.paid';
-          const inv = (await c.query(`INSERT INTO invoices (tenant_id, subscription_id, number, source, provider, provider_invoice_ref, status, currency, subtotal, total, amount_paid, issued_at, paid_at, period_start, period_end)
+          // A paid invoice is never downgraded by a late failure event; a paid event also sets the final amount.
+          let inv = (await c.query<{ id: string; status: string }>(`INSERT INTO invoices (tenant_id, subscription_id, number, source, provider, provider_invoice_ref, status, currency, subtotal, total, amount_paid, issued_at, paid_at, period_start, period_end)
             VALUES ($1,$2,$3,'provider',$4,$5,$6,$7,$8,$8,$9,$10,$11,$12,$13)
             ON CONFLICT (provider, provider_invoice_ref) WHERE provider_invoice_ref IS NOT NULL
-              DO UPDATE SET status = EXCLUDED.status, amount_paid = EXCLUDED.amount_paid, paid_at = EXCLUDED.paid_at RETURNING id`,
+              DO UPDATE SET status = EXCLUDED.status, amount_paid = EXCLUDED.amount_paid, paid_at = EXCLUDED.paid_at,
+                subtotal = CASE WHEN EXCLUDED.status = 'paid' THEN EXCLUDED.subtotal ELSE invoices.subtotal END,
+                total = CASE WHEN EXCLUDED.status = 'paid' THEN EXCLUDED.total ELSE invoices.total END
+              WHERE invoices.status <> 'paid' RETURNING id, status`,
             [tenantId, sub?.id ?? null, `${this.provider.name}:${ev.invoiceRef}`, this.provider.name, ev.invoiceRef, paid ? 'paid' : 'overdue', ev.currency, ev.amount,
               paid ? ev.amount : 0, ev.occurredAt, paid ? ev.occurredAt : null,
               paid ? ev.periodStart.toISOString().slice(0, 10) : null, paid ? ev.periodEnd.toISOString().slice(0, 10) : null])).rows[0];
-          if (paid && ev.amount > 0) {
+          const alreadyPaid = !inv;
+          inv ??= (await c.query<{ id: string; status: string }>('SELECT id, status FROM invoices WHERE provider = $1 AND provider_invoice_ref = $2', [this.provider.name, ev.invoiceRef])).rows[0]!;
+          if (paid && ev.amount > 0 && !alreadyPaid) {
             await c.query(`INSERT INTO payments (tenant_id, invoice_id, amount, currency, method, reference, received_at, source) VALUES ($1,$2,$3,$4,'provider',$5,$6,'provider_webhook')
               ON CONFLICT (invoice_id, reference) DO NOTHING`, [tenantId, inv.id, ev.amount, ev.currency, ev.paymentRef, ev.occurredAt]);
           }
-          if (sub && paid) {
-            await c.query('UPDATE subscriptions SET current_period_start = $2, current_period_end = $3 WHERE id = $1', [sub.id, ev.periodStart, ev.periodEnd]);
+          if (sub && paid && !alreadyPaid) {
+            // Periods only move forward (a late event for an older period does not rewind the subscription).
+            await c.query('UPDATE subscriptions SET current_period_start = $2, current_period_end = $3 WHERE id = $1 AND (current_period_end IS NULL OR current_period_end < $3)', [sub.id, ev.periodStart, ev.periodEnd]);
             const fresh = (await lockSubscription(c, tenantId))!;
-            if (nextStatus(fresh.status, 'payment_recovered')) await transition(c, fresh, 'payment_recovered', PROVIDER_ACTOR, {}, { invoice: ev.invoiceRef });
+            // A payment lifts a suspension only when non-payment caused it, never an operator or abuse suspension.
+            const recoverable = fresh.status === 'past_due' || (fresh.status === 'suspended' && fresh.suspended_reason === 'past_due_grace_elapsed');
+            if (recoverable) await transition(c, fresh, 'payment_recovered', PROVIDER_ACTOR, {}, { invoice: ev.invoiceRef });
             else if (fresh.status === 'pending_renewal') await transition(c, fresh, 'renew', PROVIDER_ACTOR, {}, { invoice: ev.invoiceRef });
-          } else if (sub && !paid && nextStatus(sub.status, 'payment_failed')) {
+          } else if (sub && !paid && !alreadyPaid && nextStatus(sub.status, 'payment_failed')) {
             await transition(c, sub, 'payment_failed', PROVIDER_ACTOR, {}, { invoice: ev.invoiceRef });
           }
+          if (alreadyPaid) return { status: 'ignored' as const, detail: 'invoice already paid', tenantId };
           await this.audit.record(c, { tenantId, actorUserId: null, action: paid ? 'commercial.provider_invoice_paid' : 'commercial.provider_payment_failed', targetType: 'invoice', targetId: inv.id,
             metadata: { amount: ev.amount, currency: ev.currency } });
           return { status: 'processed' as const, tenantId };
@@ -127,7 +147,6 @@ export class BillingWebhookService {
       }
       case 'subscription.canceled': {
         const tenantId = await this.tenantBySubscriptionRef(ev.subscriptionRef);
-        if (!tenantId) return { status: 'ignored', detail: 'unknown subscription' };
         return this.db.withTenant(tenantId, SYS, async (c) => {
           const sub = await lockSubscription(c, tenantId);
           if (!sub || sub.billing_reference !== ev.subscriptionRef || !nextStatus(sub.status, 'cancel_now')) return { status: 'ignored' as const, detail: 'not applicable', tenantId };

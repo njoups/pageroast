@@ -14,7 +14,10 @@ describe('SafeHttpClient against a real local server', () => {
       .route('/loop', (_q, r) => { r.statusCode = 302; r.setHeader('location', '/loop'); r.end(); })
       .route('/to-metadata', (_q, r) => { r.statusCode = 302; r.setHeader('location', 'http://169.254.169.254/latest/meta-data/'); r.end(); })
       .route('/to-internal', (_q, r) => { r.statusCode = 301; r.setHeader('location', `http://internal.test:${srv.port}/ok`); r.end(); })
-      .route('/gzip', (_q, r) => { r.setHeader('content-encoding', 'gzip'); r.end(gzipSync('compressed body')); });
+      .route('/gzip', (_q, r) => { r.setHeader('content-encoding', 'gzip'); r.end(gzipSync('compressed body')); })
+      .route('/to-other-origin', (_q, r) => { r.statusCode = 302; r.setHeader('location', `http://localhost:${srv.port}/ok`); r.end(); })
+      .route('/same-origin-hop', (_q, r) => { r.statusCode = 302; r.setHeader('location', '/ok'); r.end(); })
+      .route('/bad-location', (_q, r) => { r.statusCode = 302; r.setHeader('location', 'http://['); r.end(); });
   });
   afterAll(() => srv.close());
 
@@ -25,6 +28,21 @@ describe('SafeHttpClient against a real local server', () => {
     expect((await http.get(srv.url('/ok'))).body.toString()).toBe('hello');
     expect((await http.get(srv.url('/gzip'))).body.toString()).toBe('compressed body');
     expect(srv.hits.at(-1)!.headers['user-agent']).toBe('test');
+  });
+
+  it('QA-IN-02: credential headers never follow a redirect to another origin; same-origin hops keep them', async () => {
+    const http = new SafeHttpClient(base);
+    await http.get(srv.url('/to-other-origin'), { 'x-goog-api-key': 'SECRET-KEY', accept: 'application/xml', 'if-none-match': 'W/"1"' });
+    const hop = srv.hits.at(-1)!;
+    expect(hop.headers['x-goog-api-key']).toBeUndefined();
+    expect(hop.headers['if-none-match']).toBeUndefined();
+    expect(hop.headers.accept).toBe('application/xml');
+    await http.get(srv.url('/same-origin-hop'), { 'x-goog-api-key': 'SECRET-KEY' });
+    expect(srv.hits.at(-1)!.headers['x-goog-api-key']).toBe('SECRET-KEY');
+  });
+
+  it('QA-IN-07: an invalid redirect Location is a non-retryable redirect error, not a network error', async () => {
+    await expect(new SafeHttpClient(base).get(srv.url('/bad-location'))).rejects.toMatchObject({ kind: 'redirect' });
   });
 
   it('enforces size limit, timeout and redirect limit', async () => {

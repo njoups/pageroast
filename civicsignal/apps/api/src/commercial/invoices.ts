@@ -14,8 +14,9 @@ export type InvoiceStatus = 'draft' | 'issued' | 'partially_paid' | 'paid' | 'ov
 
 export const InvoiceInput = z.object({
   currency: z.string().regex(/^[A-Z]{3}$/),
-  lines: z.array(z.object({ description: z.string().min(1).max(500), quantity: z.number().positive().max(1e9), unitAmount: z.number().nonnegative().max(1e13) }).strict()).min(1).max(100),
-  taxAmount: z.number().nonnegative().max(1e13).default(0),
+  // Money is entered in cents and computed in PostgreSQL numeric, never in floating point.
+  lines: z.array(z.object({ description: z.string().min(1).max(500), quantity: z.number().positive().max(1e6).multipleOf(0.0001), unitAmount: z.number().nonnegative().max(1e9).multipleOf(0.01) }).strict()).min(1).max(100),
+  taxAmount: z.number().nonnegative().max(1e11).multipleOf(0.01).default(0),
   periodStart: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
   periodEnd: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
   contractId: z.string().uuid().optional(),
@@ -28,14 +29,13 @@ export const InvoiceInput = z.object({
 }).strict();
 
 export const PaymentInput = z.object({
-  amount: z.number().positive().max(1e13),
+  amount: z.number().positive().max(1e13).multipleOf(0.01),
   method: z.enum(['bank_transfer', 'government_treasury', 'other']),
   reference: z.string().min(1).max(200),
   receivedAt: z.string().datetime(),
   note: z.string().max(1000).optional(),
 }).strict();
 
-const money = (n: number) => Math.round(n * 100) / 100;
 
 export async function createDraftInvoice(c: PoolClient, tenantId: string, input: z.infer<typeof InvoiceInput>, userId: string) {
   if (input.idempotencyKey) {
@@ -43,20 +43,19 @@ export async function createDraftInvoice(c: PoolClient, tenantId: string, input:
     if (ex) return { id: ex.id as string, created: false };
   }
   if (input.contractId && !(await c.query('SELECT 1 FROM contracts WHERE id = $1 AND tenant_id = $2', [input.contractId, tenantId])).rowCount) throw notFound('Contract');
-  const lines = input.lines.map((l) => ({ ...l, amount: money(l.quantity * l.unitAmount) }));
-  const subtotal = money(lines.reduce((a, l) => a + l.amount, 0));
-  const tax = money(input.taxAmount);
   const sub = (await c.query<{ id: string }>('SELECT id FROM subscriptions WHERE tenant_id = $1 AND ended_at IS NULL', [tenantId])).rows[0];
   const inv = (await c.query<{ id: string }>(`INSERT INTO invoices (tenant_id, subscription_id, contract_id, source, status, currency, subtotal, tax_amount, total, period_start, period_end, po_reference,
       tax_metadata, bill_to, notes, document_refs, idempotency_key, created_by)
-    VALUES ($1,$2,$3,'manual','draft',$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16) RETURNING id`,
-    [tenantId, sub?.id ?? null, input.contractId ?? null, input.currency, subtotal, tax, money(subtotal + tax), input.periodStart ?? null, input.periodEnd ?? null,
+    VALUES ($1,$2,$3,'manual','draft',$4,0,$5::numeric,$5::numeric,$6,$7,$8,$9,$10,$11,$12,$13,$14) RETURNING id`,
+    [tenantId, sub?.id ?? null, input.contractId ?? null, input.currency, String(input.taxAmount), input.periodStart ?? null, input.periodEnd ?? null,
       input.poReference ?? null, JSON.stringify(input.taxMetadata), JSON.stringify(input.billTo), input.notes ?? null, input.documentRefs, input.idempotencyKey ?? null, userId])).rows[0]!;
   let i = 0;
-  for (const l of lines) {
-    await c.query('INSERT INTO invoice_lines (tenant_id, invoice_id, description, quantity, unit_amount, amount, sort_order) VALUES ($1,$2,$3,$4,$5,$6,$7)',
-      [tenantId, inv.id, l.description, l.quantity, l.unitAmount, l.amount, i++]);
+  for (const l of input.lines) {
+    await c.query(`INSERT INTO invoice_lines (tenant_id, invoice_id, description, quantity, unit_amount, amount, sort_order)
+      VALUES ($1,$2,$3,$4::numeric,$5::numeric, round($4::numeric * $5::numeric, 2), $6)`, [tenantId, inv.id, l.description, String(l.quantity), String(l.unitAmount), i++]);
   }
+  // Totals are the sum of the stored (rounded) line amounts, computed in numeric.
+  await c.query(`UPDATE invoices SET subtotal = s.v, total = s.v + tax_amount FROM (SELECT coalesce(sum(amount), 0) AS v FROM invoice_lines WHERE invoice_id = $1) s WHERE id = $1`, [inv.id]);
   return { id: inv.id, created: true };
 }
 
@@ -84,16 +83,19 @@ export async function issueInvoice(c: PoolClient, tenantId: string, id: string, 
 export async function recordPayment(c: PoolClient, tenantId: string, id: string, p: z.infer<typeof PaymentInput>, actor: Actor & { userId: string }) {
   const inv = await lockInvoice(c, tenantId, id);
   if (!['issued', 'partially_paid', 'overdue'].includes(inv.status)) throw conflict('invalid_invoice_transition', `A payment cannot be recorded on a ${inv.status} invoice`);
-  const outstanding = money(Number(inv.total) - Number(inv.amount_paid));
-  if (p.amount > outstanding) throw new AppError(400, 'overpayment', `The amount exceeds the outstanding balance (${outstanding} ${inv.currency})`);
+  const outstanding = (await c.query<{ o: string; over: boolean }>('SELECT total - amount_paid AS o, $2::numeric > total - amount_paid AS over FROM invoices WHERE id = $1', [id, String(p.amount)])).rows[0]!;
+  if (outstanding.over) throw new AppError(400, 'overpayment', `The amount exceeds the outstanding balance (${outstanding.o} ${inv.currency})`);
   const ins = await c.query(`INSERT INTO payments (tenant_id, invoice_id, amount, currency, method, reference, received_at, source, note, recorded_by)
     VALUES ($1,$2,$3,$4,$5,$6,$7,'manual',$8,$9) ON CONFLICT (invoice_id, reference) DO NOTHING RETURNING id`,
-    [tenantId, id, money(p.amount), inv.currency, p.method, p.reference, p.receivedAt, p.note ?? null, actor.userId]);
+    [tenantId, id, String(p.amount), inv.currency, p.method, p.reference, p.receivedAt, p.note ?? null, actor.userId]);
   if (!ins.rowCount) throw conflict('payment_duplicate', 'A payment with this reference is already recorded on this invoice');
-  const paid = money(Number(inv.amount_paid) + p.amount);
-  const status: InvoiceStatus = paid >= Number(inv.total) ? 'paid' : 'partially_paid';
-  const row = (await c.query(`UPDATE invoices SET amount_paid = $2, status = $3, paid_at = CASE WHEN $3 = 'paid' THEN $4::timestamptz ELSE paid_at END WHERE id = $1 RETURNING *`,
-    [id, paid, status, p.receivedAt])).rows[0];
+  // Computed in numeric. A partial payment does not clear 'overdue' while the due date has passed (that would restart
+  // the dunning clock on every small payment).
+  const row = (await c.query(`UPDATE invoices SET amount_paid = amount_paid + $2::numeric,
+      status = CASE WHEN amount_paid + $2::numeric >= total THEN 'paid' WHEN due_at < now() THEN 'overdue' ELSE 'partially_paid' END,
+      paid_at = CASE WHEN amount_paid + $2::numeric >= total THEN $3::timestamptz ELSE paid_at END
+    WHERE id = $1 RETURNING *`, [id, String(p.amount), p.receivedAt])).rows[0];
+  const status = row.status as InvoiceStatus;
   if (status === 'paid') await recoverIfSettled(c, tenantId, actor);
   return { invoice: row, paymentId: ins.rows[0].id as string };
 }
@@ -102,16 +104,19 @@ export async function recordPayment(c: PoolClient, tenantId: string, id: string,
 export async function recoverIfSettled(c: PoolClient, tenantId: string, actor: Actor) {
   const sub = await lockSubscription(c, tenantId);
   if (!sub || !(sub.status === 'past_due' || (sub.status === 'suspended' && sub.suspended_reason === 'past_due_grace_elapsed'))) return null;
-  const open = (await c.query(`SELECT 1 FROM invoices WHERE tenant_id = $1 AND status = 'overdue'`, [tenantId])).rowCount;
+  const open = (await c.query(`SELECT 1 FROM invoices WHERE tenant_id = $1 AND status IN ('issued','partially_paid','overdue') AND due_at < now()`, [tenantId])).rowCount;
   if (open) return null;
   return transition(c, sub, 'payment_recovered', actor);
 }
 
-export async function voidInvoice(c: PoolClient, tenantId: string, id: string) {
+export async function voidInvoice(c: PoolClient, tenantId: string, id: string, actor: Actor = { type: 'system' }) {
   const inv = await lockInvoice(c, tenantId, id);
   if (inv.status === 'draft') return (await c.query(`UPDATE invoices SET status = 'canceled' WHERE id = $1 RETURNING *`, [id])).rows[0];
   if (!['issued', 'overdue'].includes(inv.status) || Number(inv.amount_paid) > 0) throw conflict('invalid_invoice_transition', `A ${inv.status} invoice${Number(inv.amount_paid) > 0 ? ' with payments' : ''} cannot be voided`);
-  return (await c.query(`UPDATE invoices SET status = 'void', voided_at = now() WHERE id = $1 RETURNING *`, [id])).rows[0];
+  const row = (await c.query(`UPDATE invoices SET status = 'void', voided_at = now() WHERE id = $1 RETURNING *`, [id])).rows[0];
+  // Voiding the last overdue invoice settles the account: a past-due subscription returns to active.
+  if (inv.status === 'overdue') await recoverIfSettled(c, tenantId, actor);
+  return row;
 }
 
 export async function invoiceDetail(c: PoolClient, tenantId: string, id: string) {

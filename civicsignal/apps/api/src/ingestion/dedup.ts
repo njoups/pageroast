@@ -18,7 +18,10 @@ export function titleSimilarity(a: string, b: string): number {
   return inter / (A.size + B.size - inter);
 }
 
-export interface DedupCandidate { id: string; publisherDomain: string; normalizedTitle: string; contentHash: string }
+export interface DedupCandidate { id: string; publisherDomain: string; normalizedTitle: string; contentHash: string; publishedAt?: number | null }
+
+/** Same-publisher duplicates are republications within this window; a recurring headline on another day is a new article. */
+export const DUPLICATE_WINDOW_MS = 36 * 3_600_000;
 export interface DedupDecision { status: 'original' | 'duplicate' | 'near_duplicate'; duplicateOf: string | null; reason: string | null }
 
 /**
@@ -31,12 +34,16 @@ export interface DedupDecision { status: 'original' | 'duplicate' | 'near_duplic
  *      at least `minTokens` words so short generic titles ("Live update") are not merged
  */
 export function decideDuplicate(
-  rec: { publisherDomain: string; normalizedTitle: string; contentHash: string },
+  rec: { publisherDomain: string; normalizedTitle: string; contentHash: string; publishedAt?: number | null },
   candidates: DedupCandidate[],
   opts: { similarityThreshold: number; minTokens: number },
 ): DedupDecision {
-  const same = candidates.filter((c) => c.publisherDomain === rec.publisherDomain);
-  const byHash = same.find((c) => c.contentHash === rec.contentHash);
+  // Recurring headlines ("Harga emas hari ini", weather, live blogs) from one publisher on different days are separate
+  // articles: only records published close together (or with an unknown time) can be duplicates of each other.
+  const close = (c: DedupCandidate) => rec.publishedAt == null || c.publishedAt == null || Math.abs(rec.publishedAt - c.publishedAt) <= DUPLICATE_WINDOW_MS;
+  const same = candidates.filter((c) => c.publisherDomain === rec.publisherDomain && close(c));
+  // A title with no letters or digits (emoji only) carries no identity; its hash would match every such title.
+  const byHash = rec.normalizedTitle.length > 0 ? same.find((c) => c.contentHash === rec.contentHash) : undefined;
   if (byHash) return { status: 'duplicate', duplicateOf: byHash.id, reason: 'content_hash' };
   const byTitle = same.find((c) => c.normalizedTitle === rec.normalizedTitle && rec.normalizedTitle.length > 0);
   if (byTitle) return { status: 'duplicate', duplicateOf: byTitle.id, reason: 'publisher_headline' };

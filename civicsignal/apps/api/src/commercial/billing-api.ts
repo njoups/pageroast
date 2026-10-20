@@ -165,11 +165,15 @@ export class BillingService {
       const sub = await lockSubscription(c, t.orgId);
       if (sub && sub.billing_mode !== 'self_service' && sub.status !== 'trialing') throw conflict('contract_billing', 'This organization is billed by contract; plan changes go through sales');
       if (sub?.plan_version_id === pv.id && sub.status === 'active') throw conflict('already_on_plan', 'The organization is already on this plan');
-      return { pv, sub };
+      // Recorded before the provider is called, independent of any live subscription (an expired organization can pay).
+      const cs = (await c.query<{ id: string }>(`INSERT INTO checkout_sessions (tenant_id, provider, plan_version_id, requested_by) VALUES ($1,$2,$3,$4) RETURNING id`,
+        [t.orgId, this.provider.name, pv.id, auth.userId])).rows[0]!;
+      return { pv, sub, checkoutId: cs.id };
     });
     const session = await this.provider.createCheckout({ tenantId: t.orgId, planVersionId: prep.pv.id, planCode: prep.pv.code, amount: Number(prep.pv.price_amount), currency: prep.pv.currency!,
       interval: prep.pv.billing_interval, customerRef: prep.sub?.provider_customer_ref ?? null, returnUrl: `${this.config.appBaseUrl}/o/${t.orgId}/billing?checkout=returned` });
     await this.db.withTenant(t.orgId, auth.userId, async (c) => {
+      await c.query(`UPDATE checkout_sessions SET session_ref = $2, status = 'open' WHERE id = $1`, [prep.checkoutId, session.sessionRef]);
       const sub = await lockSubscription(c, t.orgId);
       if (sub) await recordEvent(c, sub, { event: 'checkout_started', from: sub.status, to: sub.status, toPlan: prep.pv.id, actor: { type: 'user', userId: auth.userId },
         metadata: { provider: this.provider.name, sessionRef: session.sessionRef, planVersionId: prep.pv.id } });

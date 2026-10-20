@@ -33,6 +33,21 @@ Findings, open risks and acceptance criteria: [PRODUCTION_READINESS_ASSESSMENT.m
 | Social data obligations: provider storage limits, refresh-or-delete job, derived-analysis approval gate, tenant-isolated usage/budget/lifecycle tables | ✅ tested (mock provider) |
 | Secrets | env or secret manager only; `.env.example` holds empty placeholders; secret scan of tree and history gates CI | ✅ |
 
+### Controls added by the full-system QA audit (Prompt 09; see FULL_SYSTEM_QA_REPORT.md)
+| Control | State |
+|---|---|
+| Retention enable/shorten and lifting a legal hold require `data:delete` (owner only) | ✅ tested |
+| CSV export requires `data:export` (report_viewer cannot export) | ✅ tested |
+| Redirects: https→http refused, credential headers dropped on origin change, invalid `Location` non-retryable | ✅ tested |
+| Changing a source's feed host revokes its authorization (back to `unverified`) | ✅ |
+| Canonical URLs never keep userinfo credentials | ✅ tested |
+| Query language limits (20 prefix terms, NOT depth) against CPU exhaustion | ✅ |
+| LLM output grounding: whole-word evidence, numbers and quotes must occur in the cited source | ✅ tested (no live model) |
+| Payments append-only (no UPDATE/DELETE grant); issued manual invoices immutable (trigger) | ✅ tested |
+| Billing webhooks: checkout must match a recorded session; events for a replaced subscription are ignored; operator suspensions are never lifted by a payment | ✅ tested |
+| Notifications claimed atomically; disabled or removed users no longer receive email | ✅ tested |
+| Open P3s: inbox visibility re-check (AZ-03), non-`__Host-` cookie fallback (AZ-04), no email verification (AZ-05), system-read policies (AZ-07), social parent title (AZ-08), cluster uncertainty notes (AZ-09) | ⬜ open |
+
 ## Threat model (summary)
 | Threat | Mitigation |
 |---|---|

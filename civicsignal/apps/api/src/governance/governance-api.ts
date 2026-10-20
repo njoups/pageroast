@@ -11,6 +11,15 @@ import { Auth, AuthContext, Meta, RequestMeta, Tenant, TenantContext } from '../
 import { Database } from '../database/database.service';
 import { purgeMentions } from './purge';
 import { DATA_CLASSES, RetentionService } from './retention.service';
+import { hasPermission } from '../authz/permissions';
+
+/**
+ * Changes that make data eligible for deletion (enabling retention, shortening or adding a period, lifting a legal hold)
+ * are deletions in effect, so they need data:delete (owners), not only retention:manage.
+ */
+const requireDelete = (t: TenantContext, what: string) => {
+  if (!hasPermission(t.role, 'data:delete')) throw forbidden(`${what} can delete data and needs the data:delete permission (organization owners)`);
+};
 
 /** Deletion requests resolve to at most this many records; larger scopes must be split (or use retention). */
 export const MAX_DELETION_RECORDS = 20_000;
@@ -61,6 +70,8 @@ export class GovernanceService {
     if (dto.legalHold === true && !dto.legalHoldReason) throw badRequest('validation_failed', 'A legal hold needs a reason');
     return this.db.withTenant(t.orgId, auth.userId, async (c) => {
       const cur = await this.controls(c, t.orgId);
+      if (dto.retentionEnabled === true && !cur.retention_enabled) requireDelete(t, 'Enabling retention');
+      if (dto.legalHold === false && cur.legal_hold) requireDelete(t, 'Lifting a legal hold');
       const r = (await c.query(`INSERT INTO tenant_data_controls (tenant_id, legal_hold, legal_hold_reason, retention_enabled, updated_by, updated_at)
         VALUES ($1, coalesce($2, false), $3, coalesce($4, false), $5, $6)
         ON CONFLICT (tenant_id) DO UPDATE SET legal_hold = coalesce($2, tenant_data_controls.legal_hold),
@@ -80,6 +91,7 @@ export class GovernanceService {
     if (dataClass === 'audit_events' && dto.retentionDays < 365) throw badRequest('validation_failed', 'Audit events must be kept at least 365 days');
     return this.db.withTenant(t.orgId, auth.userId, async (c) => {
       const before = (await c.query('SELECT retention_days FROM retention_policies WHERE data_class = $1', [dataClass])).rows[0]?.retention_days ?? null;
+      if (before === null || dto.retentionDays < before) requireDelete(t, 'Adding or shortening a retention period');
       const r = (await c.query(`INSERT INTO retention_policies (tenant_id, data_class, retention_days, updated_by, updated_at) VALUES ($1,$2,$3,$4,$5)
         ON CONFLICT (tenant_id, data_class) DO UPDATE SET retention_days = $3, updated_by = $4, updated_at = $5 RETURNING data_class, retention_days, updated_at`,
         [t.orgId, dataClass, dto.retentionDays, auth.userId, this.clock.now()])).rows[0];

@@ -70,7 +70,12 @@ export async function assignPlan(c: PoolClient, tenantId: string, input: {
     return s;
   }
   const s = (await c.query<SubscriptionRow>(`UPDATE subscriptions SET plan_code = $2, plan_version_id = $3, billing_mode = $4, status = $5, trial_ends_at = $6, current_period_start = $7,
-      current_period_end = $8, contract_id = coalesce($9, contract_id), cancel_at_period_end = false, canceled_at = NULL, scheduled_plan_version_id = NULL, scheduled_change_at = NULL,
+      current_period_end = $8,
+      -- A contract reference only survives on contract billing; provider references only on self-service billing.
+      contract_id = CASE WHEN $4 = 'contract' THEN coalesce($9, contract_id) ELSE NULL END,
+      billing_provider = CASE WHEN $4 = 'self_service' THEN billing_provider ELSE NULL END,
+      billing_reference = CASE WHEN $4 = 'self_service' THEN billing_reference ELSE NULL END,
+      cancel_at_period_end = false, canceled_at = NULL, scheduled_plan_version_id = NULL, scheduled_change_at = NULL,
       past_due_since = NULL, suspended_reason = NULL, usage_anchor = CASE WHEN $10 THEN $7 ELSE usage_anchor END
     WHERE id = $1 RETURNING *`,
     [cur.id, pv.code, pv.id, input.billingMode, input.status, input.trialEndsAt ?? null, start, end, input.contractId ?? null, input.resetUsageAnchor === true])).rows[0]!;

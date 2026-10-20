@@ -38,7 +38,7 @@ describe('AnthropicProvider (mocked HTTP)', () => {
     const { p, calls } = provider(() => message(JSON.stringify(good)));
     const r = await p.analyzeArticle(input);
     expect(r.output.sentiment.label).toBe(good.sentiment.label);
-    expect(r.usage).toEqual({ inputTokens: 1234, outputTokens: 321, cacheReadTokens: 1000 });
+    expect(r.usage).toEqual({ inputTokens: 1234, outputTokens: 321, cacheReadTokens: 1000, cacheWriteTokens: 0 });
     expect(r.promptVersion).toBe('article-analysis@1');
     const req = calls[0]!;
     expect(req.url).toMatch(/^http:\/\/mock\.invalid\/v1\/messages/);
@@ -56,8 +56,12 @@ describe('AnthropicProvider (mocked HTTP)', () => {
   });
   it('classifies refusal, truncation, malformed JSON and schema-invalid output', async () => {
     expect(await kind(provider(() => message('', 'refusal')).p.analyzeArticle(input))).toBe('refusal');
-    expect(await kind(provider(() => message('{"entities":[', 'max_tokens')).p.analyzeArticle(input))).toBe('invalid_output');
+    // Truncation repeats with the same input, so it is a distinct, non-retryable kind (QA-AI-04).
+    expect(await kind(provider(() => message('{"entities":[', 'max_tokens')).p.analyzeArticle(input))).toBe('truncated');
     expect(await kind(provider(() => message('{not json')).p.analyzeArticle(input))).toBe('invalid_output');
+    // Rejected answers were still billed: the error carries the provider-reported usage so it can be recorded (QA-AI-04).
+    const err = await provider(() => message('{"entities":[', 'max_tokens')).p.analyzeArticle(input).catch((e) => e);
+    expect(err.opts.usage).toEqual({ inputTokens: 1234, outputTokens: 321, cacheReadTokens: 1000, cacheWriteTokens: 0 });
     expect(await kind(provider(() => message('{"entities": "nope"}')).p.analyzeArticle(input))).toBe('invalid_output');
   });
   it('maps HTTP errors to retryable / terminal kinds and keeps retry-after', async () => {

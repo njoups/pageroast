@@ -381,3 +381,24 @@ Implemented: see [BILLING_AND_SUBSCRIPTIONS.md](BILLING_AND_SUBSCRIPTIONS.md) an
 - a public API (`api_access`);
 - proration;
 - automatic enforcement of plan retention limits.
+
+## Prompt 09: full-system QA and regression audit (2026-10-20)
+
+The full report is in [FULL_SYSTEM_QA_REPORT.md](FULL_SYSTEM_QA_REPORT.md).
+
+- **Audit scope:** six parallel module audits (authorization, ingestion and social, AI, alerts/analytics/reports, billing, frontend contracts), plus an end-to-end lifecycle integration test.
+- **Findings:** no P0. No cross-tenant leak found. 12 P1 and 35 P2 defects.
+- **Fixed:** all 12 P1s and 25 of the 35 P2s, each with a regression test. Migration `0014_qa_fixes.sql` provides:
+  - checkout sessions;
+  - cache-write token pricing;
+  - append-only payments and immutable issued invoices;
+  - a frozen usage time zone;
+  - delivery claim columns;
+  - purge indexes.
+- **Open P2s:**
+  - AI: AI-06 (cluster summaries bypass the rate gate), AI-07 (stale cluster summary overwrite), AI-10, AI-11 and AI-12 (clustering and language detection);
+  - IN-04: an updated article at the same URL is not re-processed;
+  - AR-04 (syndicated copies counted), AR-06 (notification daily budget), AR-08 (issues dashboard UTC days);
+  - FE-02: social connector edit UI.
+- **Tests:** 34 API suites / 577 tests, web 20/20, lint, typecheck and build all pass. Secret, licence and production dependency scans are clean.
+- **Verdict:** ready for **controlled internal testing**. Not ready for a pilot until the conditions in the QA report, section 13, are met (above all, live verification of the LLM, SMTP and staging environment).

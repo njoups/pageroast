@@ -8,21 +8,24 @@ import type { Usage } from './providers/provider';
  */
 export async function recordAiUsage(c: PoolClient, tenantId: string, provider: string, model: string, task: string, usage: Usage,
   refs: { analysisId?: string; summaryId?: string }): Promise<{ cost: number | null; currency: string | null }> {
-  const p = (await c.query<{ input_per_mtok: string; output_per_mtok: string; cache_read_per_mtok: string | null; currency: string; updated_at: Date }>(
-    'SELECT input_per_mtok, output_per_mtok, cache_read_per_mtok, currency, updated_at FROM ai_pricing WHERE provider = $1 AND model = $2', [provider, model])).rows[0];
+  const p = (await c.query<{ input_per_mtok: string; output_per_mtok: string; cache_read_per_mtok: string | null; cache_write_per_mtok: string | null; currency: string; updated_at: Date }>(
+    'SELECT input_per_mtok, output_per_mtok, cache_read_per_mtok, cache_write_per_mtok, currency, updated_at FROM ai_pricing WHERE provider = $1 AND model = $2', [provider, model])).rows[0];
   let cost: number | null = null;
+  const cacheWrite = usage.cacheWriteTokens ?? 0;
   if (p) {
-    const uncached = Math.max(0, usage.inputTokens - usage.cacheReadTokens);
-    cost = (uncached * Number(p.input_per_mtok) + usage.cacheReadTokens * Number(p.cache_read_per_mtok ?? p.input_per_mtok) + usage.outputTokens * Number(p.output_per_mtok)) / 1e6;
+    // inputTokens already excludes cache reads and writes (they are reported separately); each is priced on its own.
+    // Without a configured cache-write price, cache writes are priced at the input rate (an underestimate).
+    cost = (usage.inputTokens * Number(p.input_per_mtok) + usage.cacheReadTokens * Number(p.cache_read_per_mtok ?? p.input_per_mtok)
+      + cacheWrite * Number(p.cache_write_per_mtok ?? p.input_per_mtok) + usage.outputTokens * Number(p.output_per_mtok)) / 1e6;
     cost = Math.round(cost * 1e6) / 1e6;
   }
   const rec = await c.query<{ id: string }>(
-    `INSERT INTO ai_usage_records (tenant_id, provider, model, task, analysis_id, summary_id, tokens_in, tokens_out, tokens_cache_read, cost_estimate, currency, pricing_updated_at)
-     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12) RETURNING id`,
-    [tenantId, provider, model, task, refs.analysisId ?? null, refs.summaryId ?? null, usage.inputTokens, usage.outputTokens, usage.cacheReadTokens,
+    `INSERT INTO ai_usage_records (tenant_id, provider, model, task, analysis_id, summary_id, tokens_in, tokens_out, tokens_cache_read, tokens_cache_write, cost_estimate, currency, pricing_updated_at)
+     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13) RETURNING id`,
+    [tenantId, provider, model, task, refs.analysisId ?? null, refs.summaryId ?? null, usage.inputTokens, usage.outputTokens, usage.cacheReadTokens, cacheWrite,
       cost, p?.currency ?? null, p?.updated_at ?? null]);
   // Plan metering: provider-reported tokens of this call, counted once per call record.
-  const tokens = usage.inputTokens + usage.outputTokens;
+  const tokens = usage.inputTokens + cacheWrite + usage.outputTokens;
   if (tokens > 0) await consume(c, tenantId, { metric: 'ai_tokens', quantity: tokens, idempotencyKey: `ai_usage:${rec.rows[0]!.id}`, source: provider, metadata: { task, model } });
   return { cost, currency: p?.currency ?? null };
 }

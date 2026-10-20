@@ -91,7 +91,7 @@ export class NotificationService {
     if (!userIds.length) return [];
     const r = await c.query<{ user_id: string; role: Role; assigned: boolean }>(
       `SELECT m.user_id, m.role, EXISTS (SELECT 1 FROM project_members pm WHERE pm.project_id = $1 AND pm.user_id = m.user_id) AS assigned
-       FROM memberships m WHERE m.user_id = ANY($2::uuid[])`, [projectId, userIds]);
+       FROM memberships m JOIN users u ON u.id = m.user_id WHERE m.user_id = ANY($2::uuid[]) AND u.disabled_at IS NULL`, [projectId, userIds]);
     return r.rows.filter((x) => hasPermission(x.role, 'alerts:read') && (seesAllProjects(x.role) || x.assigned)).map((x) => x.user_id);
   }
 
@@ -189,7 +189,23 @@ export class NotificationService {
     if (d.not_before && d.not_before > now) return { outcome: 'delay', ms: d.not_before.getTime() - now.getTime() };
     const wait = await this.rateGate(`${d.channel}:${tenantId}`, d.channel === 'email' ? this.config.alerts.emailPerMinute : 20);
     if (wait) return { outcome: 'delay', ms: wait };
-    await this.db.withTenant(tenantId, SYS, (c) => c.query(`UPDATE notification_deliveries SET status = 'sending', attempts = $2 WHERE id = $1`, [id, attempt]));
+    // Atomic claim: only one job (original or a tick re-queue) can move the row to 'sending'; a claim older than 15 min
+    // (crashed worker) may be taken again. The recipient must still be enabled and allowed to see the issue's project.
+    const claim = await this.db.withTenant(tenantId, SYS, async (c) => {
+      const row = (await c.query<{ user_id: string; project_id: string }>(
+        `UPDATE notification_deliveries nd SET status = 'sending', attempts = $2, claimed_at = now() FROM detected_issues i
+         WHERE nd.id = $1 AND i.id = nd.issue_id
+           AND (nd.status IN ('pending','deferred','failed') OR (nd.status = 'sending' AND nd.claimed_at < now() - interval '15 minutes'))
+         RETURNING nd.user_id, i.project_id`, [id, attempt])).rows[0];
+      if (!row) return 'taken' as const;
+      // eligible(): still a member, not disabled, may read alerts and see the project (removed members fail here too).
+      if (!(await this.eligible(c, row.project_id, [row.user_id])).length) {
+        await c.query(`UPDATE notification_deliveries SET status = 'suppressed', last_error = 'Recipient no longer has access' WHERE id = $1`, [id]);
+        return 'ineligible' as const;
+      }
+      return 'claimed' as const;
+    });
+    if (claim !== 'claimed') return { outcome: 'skipped' };
     try {
       const p = d.payload;
       if (d.channel === 'email') {
@@ -207,7 +223,8 @@ export class NotificationService {
       return { outcome: 'delivered' };
     } catch (e) {
       const err = e instanceof DeliveryError ? e : new DeliveryError(true, (e as Error).message);
-      const status = !err.retryable || final ? (err.retryable ? 'dead' : 'failed') : 'failed';
+      // Permanent rejections and exhausted retries are 'dead'; 'failed' means another attempt will follow.
+      const status = !err.retryable || final ? 'dead' : 'failed';
       await this.db.withTenant(tenantId, SYS, (c) => c.query(`UPDATE notification_deliveries SET status = $2, last_error = $3 WHERE id = $1`, [id, status, err.message.slice(0, 500)]));
       logEvent('warn', 'alerts.delivery_failed', { tenantId, deliveryId: id, channel: d.channel, attempt, retryable: err.retryable, final });
       throw err;
@@ -221,13 +238,17 @@ export class NotificationService {
       previous_secret_ciphertext: string | null; previous_secret_expires_at: Date | null; is_active: boolean; verified_at: Date | null; issue_id: string | null }>(
       `SELECT d.id, d.status, d.event, d.endpoint_id, e.url, e.secret_ciphertext, e.previous_secret_ciphertext, e.previous_secret_expires_at, e.is_active, e.verified_at, d.issue_id
        FROM webhook_deliveries d JOIN webhook_endpoints e ON e.id = d.endpoint_id WHERE d.id = $1`, [id])).rows[0]);
-    if (!row || !['pending', 'failed'].includes(row.status)) return { outcome: 'skipped' };
+    if (!row || !['pending', 'failed', 'sending'].includes(row.status)) return { outcome: 'skipped' };
     if (!row.is_active || !row.verified_at || !this.cipher) {
       await this.db.withTenant(tenantId, SYS, (c) => c.query(`UPDATE webhook_deliveries SET status = 'skipped', error = $2 WHERE id = $1`, [id, !this.cipher ? 'CREDENTIALS_KEY not configured' : 'Endpoint disabled or unverified']));
       return { outcome: 'skipped' };
     }
     const wait = await this.rateGate(`webhook:${tenantId}`, this.config.alerts.webhookPerMinute);
     if (wait) return { outcome: 'delay', ms: wait };
+    const claimed = await this.db.withTenant(tenantId, SYS, async (c) => (await c.query(
+      `UPDATE webhook_deliveries SET status = 'sending', claimed_at = now() WHERE id = $1
+         AND (status IN ('pending','failed') OR (status = 'sending' AND claimed_at < now() - interval '15 minutes')) RETURNING id`, [id])).rowCount);
+    if (!claimed) return { outcome: 'skipped' };
     const body = await this.db.withTenant(tenantId, SYS, (c) => this.webhookBody(c, tenantId, row.issue_id, row.event, id));
     const secrets = [this.cipher.decrypt(row.secret_ciphertext, `webhook:${row.endpoint_id}`)];
     if (row.previous_secret_ciphertext && row.previous_secret_expires_at && row.previous_secret_expires_at > now) {
