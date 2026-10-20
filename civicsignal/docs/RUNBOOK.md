@@ -168,3 +168,19 @@ Suggested alerts (thresholds are starting points; tune after a week of staging d
 ## Drills
 - **Restore drill:** `ADMIN_DATABASE_URL=… scripts/verify-restore.sh <latest backup>`, quarterly and after data-rewriting migrations. Record the result in BACKUP_AND_RECOVERY.md.
 - **Load regression:** `scripts/load/` (LOAD_TESTING.md) before releases that touch search, analytics or the worker.
+
+## Social connectors
+- **Status:** Social listening → Connectors (or `GET /api/v1/organizations/:orgId/social/connectors`) shows authorization,
+  credentials, pause state, quota used today, refresh due and past-deadline counts, and notices.
+- **Paused (`provider_quota`):** YouTube quota resets at midnight Pacific Time. Collection resumes on its own. To prevent it,
+  reduce `maxPages` or comments, or request a quota extension (needs an API Compliance Audit) and then raise `quotaPerDay`.
+- **Paused by a budget:** soft limits pause scheduled syncs only; hard limits stop all syncs until the day or month ends. Raise
+  or remove the budget under Budgets & usage if the spend is intended.
+- **Key rejected (`auth`):** reauthorize with a new key, then Test connection. **`forbidden` / accessNotConfigured:** enable YouTube Data API v3 for the project.
+- **Records past their deletion deadline > 0:**
+  - the lifecycle job could not refresh them (no credentials, not authorized, quota) and deletes them on its next run;
+  - under a legal hold they stay and are counted as blocked, which needs a decision by counsel.
+- **Lifecycle log:** `provider_lifecycle_runs` per connector and the `social.lifecycle_*` audit events. Worker log events:
+  `social.lifecycle`, `social.lifecycle_refresh_failed`.
+- **Cost estimates:** only from `provider_pricing` rows, which an operator inserts as the database owner, with a source URL
+  and verification date. Without them the UI shows "Not priced".

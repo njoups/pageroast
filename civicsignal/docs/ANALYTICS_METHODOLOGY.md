@@ -114,7 +114,11 @@ Every endpoint accepts these filters:
 - period: `from`, `to` (ISO 8601), or `days`;
 - `projectId`, `entityId`, `topic`, `sourceId`, `language` (detected, otherwise the feed-declared language, otherwise `und`);
 - `sentiment` (`positive|negative|neutral|mixed|unknown|unanalysed`) and `issueStatus`;
-- `granularity`, `entityIds` (share-of-voice group), `limit` and `offset`.
+- `granularity`, `entityIds` (share-of-voice group), `limit` and `offset`;
+- `channel`: `news` (**default**), `social` or `all`. Executive analytics and reports count news articles unless a caller asks for
+  social records explicitly. Social analytics have their own endpoint and definitions (SOCIAL_CONNECTORS.md, section 6),
+  because a post's or comment's tone and engagement are not comparable with a news article's coverage tone. The hourly
+  aggregate holds news only; other channels are answered from base tables.
 
 ## Freshness, completeness and caching
 Every response carries:

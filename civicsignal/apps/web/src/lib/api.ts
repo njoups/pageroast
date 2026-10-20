@@ -106,6 +106,7 @@ export interface Mention {
   duplicate_of: string | null; duplicate_reason: string | null; processing_status: string; availability: string;
   attribution: string | null; redistribution_restrictions: string | null; connector: string; gdelt_seen_at: string | null;
   matches: MentionMatch[]; dataOrigin: 'live';
+  channel?: 'news' | 'social'; platform?: string | null; content_type?: string | null;
 }
 export interface MonitoringQuery {
   id: string; project_id: string; name: string; keywords: string[]; aliases: string[]; exclusions: string[]; boolean_expression: string | null;
@@ -114,7 +115,7 @@ export interface MonitoringQuery {
 
 export const HEALTH_TONE: Record<Health, 'green' | 'amber' | 'red' | 'slate'> = { healthy: 'green', degraded: 'amber', failing: 'red', unknown: 'slate', disabled: 'slate' };
 export const HEALTH_LABEL: Record<Health, string> = { healthy: 'Healthy', degraded: 'Degraded', failing: 'Failing', unknown: 'Not yet collected', disabled: 'Disabled' };
-export const KIND_LABEL: Record<string, string> = { feed: 'RSS / Atom feed', gdelt: 'GDELT DOC 2.0 (open data)' };
+export const KIND_LABEL: Record<string, string> = { feed: 'RSS / Atom feed', gdelt: 'GDELT DOC 2.0 (open data)', youtube: 'YouTube Data API v3 (social)' };
 
 export function relTime(s: string | null): string {
   if (!s) return 'never';

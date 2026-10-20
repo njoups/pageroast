@@ -116,6 +116,22 @@ Full findings, severities, open risks and acceptance criteria: [PRODUCTION_READI
 | CI: secret scan (tree + history), licence review, restore drill, image build + Trivy; manual deploy workflow with approval and readiness check | `.github/workflows/` |
 | Images: Debian updates applied, no npm in runtime, non-root; Trivy 0 fixable HIGH/CRITICAL; api ready and web `/login` served from the containers | SUPPLY_CHAIN.md |
 
+### Social listening engine (Prompt 07; verified 2026-10-20 against a MOCK provider only)
+Details, provider capability matrix, data rights and limits: [SOCIAL_CONNECTORS.md](SOCIAL_CONNECTORS.md).
+| Area | Evidence |
+|---|---|
+| Provider-independent framework: descriptors (operations, fields, metrics, limits, quotas, pricing model, rights, documentation links with read date), optional connector operations (usage estimate, refresh, connection test), per-bucket usage reports | `social/providers.ts`, `ingestion/connectors/connector.ts`; descriptor consistency unit tests |
+| YouTube Data API v3 connector: keyword search, channel monitoring, optional public comments, refresh by id, connection test; key only in `X-Goog-Api-Key`; only returned metrics; quota/rate-limit/key/API-disabled error mapping | `test/unit/social/youtube.spec.ts` (27) |
+| Social records in the existing pipeline: platform, content type, provider id, parent, hashtags, engagement as returned, 30-day refresh/deletion deadlines; provider-id dedup; refresh-on-reseen; matching against project queries | `integration/social.e2e.ts` |
+| Derived analysis gated by provider rights (YouTube needs a recorded approval); analyses record news vs social, platform and content type; short texts marked; record kind passed to the analyser | social e2e |
+| Quota and cost: `provider_usage` per provider day (Pacific Time for YouTube) and bucket; pre-flight quota check; pause on exhaustion until reset; budgets warn/soft/hard with notices; cost only from verified pricing rows, else "not priced"/"incomplete" | social e2e |
+| Lifecycle: refresh due records, purge records gone at the provider or past the deadline, legal hold blocks deletion and is audited | social e2e |
+| Social analytics with stated denominators; tone by platform and content type; conversation-level distributions; engagement per record (no aggregation for YouTube); cross-platform entities; issue timeline. Executive analytics, reports, dashboard aggregates and alert rules default to news only | social e2e; full suite unchanged |
+| `/social` API (providers, connectors CRUD/credentials/test/sync/enable/health/usage/approval, budgets, mentions, analytics, issue timeline) with permissions, validation, pagination, rate limits and audit | social e2e |
+| Tenant isolation of connectors, usage, budgets, lifecycle runs and social records (API 404s, RLS read and write) | social e2e |
+| Web: Social listening workspace (connectors with status, quota bars, notices, actions, capabilities, data rights, usage and cost, sync history; analytics; mentions; provider matrix; budgets); social items labelled on Mentions | `lib/social.test.ts`; browser smoke 2026-10-20 (no console errors) |
+| **Live provider verification** | **Not done: no YouTube API key (or other provider credential) was available.** An unauthenticated request to the real endpoint returned HTTP 403 `forbidden`, confirming reachability and the error envelope only. |
+
 ## Partially implemented
 - **AI report commentary:** implemented and tested with the deterministic test provider only. No API key was available, so it has
   **not** run against a live model. With the baseline provider, reports say that AI commentary is unavailable.
@@ -125,6 +141,8 @@ Full findings, severities, open risks and acceptance criteria: [PRODUCTION_READI
   analytics cache in the same transaction (`governance/purge.ts`).
 - **GDELT connector:** implemented and contract-tested. **Not verified live**: every attempt from this environment returned
   429/503 (shared egress IP). Health shows it honestly as failing.
+- **Social listening:** YouTube connector implemented and contract-tested; **not verified live** (no API key). X, Reddit, Meta and
+  licensed providers have descriptors only (capability matrix), no connectors. OAuth flows are not built (no implemented provider uses OAuth).
 - **Second *licensed* connector:** none. No commercial provider or publisher API is contracted. Encrypted credential storage
   exists (AES-256-GCM, API never returns secrets) but no connector uses it yet.
 - **AI model analysis:** the Anthropic adapter is implemented and tested against mocked HTTP only. **No API key was available, so it
@@ -149,7 +167,8 @@ Full findings, severities, open risks and acceptance criteria: [PRODUCTION_READI
 
 ## Missing
 Entity/summary/clustering quality evaluation, report branding beyond colour (logo upload), PDF/UA tagging (accessible PDF structure), analyst annotations (UI area reserved; no storage yet), billing/metering enforcement,
-tenant data export, MFA (needs an IdP), staging/production infrastructure, break-glass support access, social connectors, licensed-provider connector.
+tenant data export, MFA (needs an IdP), staging/production infrastructure, break-glass support access, social connectors other than
+YouTube, live verification of any social provider, social connectors, licensed-provider connector.
 
 ## Broken
 None known. All automated tests pass (see bottom).
@@ -245,6 +264,25 @@ The most serious:
 - slow deep-page mention search (M11);
 - fixable HIGH/CRITICAL CVEs in the runtime images (M13).
 
+## Test results (2026-10-20, after the social listening engine)
+| Command | Result |
+|---|---|
+| `npm run lint`, `npm run typecheck` (API + web) | ✔ |
+| API jest (Postgres 16 + Redis 7) | **509 passed, 0 failed** (29 suites; +27 social unit, +12 social e2e against a mock YouTube API, +1 config) |
+| web `node:test` | 16 passed |
+| `npm run build` (API + web) | ✔ (route `/o/[orgId]/social`) |
+| `npm audit --omit=dev` | 0 vulnerabilities |
+| Licence review / secret scan (tree + history) | 201 packages pass / 0 findings |
+| Migration 0012 on the dev DB | applied |
+| Browser smoke (dev DB, real API) | social workspace: create connector, details, provider matrix, analytics empty state, budgets; no console errors. The three smoke-test connectors were deleted afterwards. |
+| Live YouTube | **not run**: no API key. Unauthenticated probe: HTTP 403 `forbidden` (reachable; error envelope as parsed) |
+
+Defects found by the new tests and fixed before commit:
+- the quota and budget pre-flight rolled back its own pause;
+- comment text was counted twice;
+- DATE columns broke the usage and cost endpoints (500);
+- URL fragments were treated as hashtags.
+
 ## Test results (2026-10-20, after production hardening)
 | Command | Result |
 |---|---|
@@ -313,17 +351,13 @@ Found and fixed during the run: a test helper bug, a Jest parallelism issue (tes
 now in the config), and a real calibration issue from live data (60-day `max-age` on a live feed, now capped).
 
 ## Next milestone
-**Staging and identity (blocking for production):**
-1. An OIDC identity provider with enforced MFA behind the `IdentityProvider` port; local passwords off in production.
-2. A staging environment per DEPLOYMENT.md (managed PostgreSQL with PITR, Redis with AUTH and TLS, TLS load balancer with WAF, egress proxy, secret manager, deployment agent). Then record a PITR drill and a rollback rehearsal with measured times, and a staging load and soak test.
-3. An external penetration test.
-4. Legal review (UU PDP basis, residency, AI-provider transfer, source licences, breach notification).
+**Social: live verification and second provider.**
+1. Obtain a YouTube Data API key in a customer- or operator-owned Google Cloud project. In staging: test the connection, sync,
+   confirm header authentication, compare counts with YouTube, exercise one lifecycle refresh, then mark the connector live-verified.
+2. Decide on the derived-metrics amendment for AI analysis of YouTube data.
+3. Legal review of social comments as personal data, and of legal hold vs provider deletion duties.
+4. Evaluate X API (Developer Agreement, deletion compliance, pay-per-use budget) or a licensed aggregator for Facebook, Instagram
+   and TikTok coverage, before building a second connector.
 
-Also remaining:
-- digest and SHA pinning, SBOM and image signing;
-- edge rate limiting for auth;
-- a configurable DB pool;
-- the low-severity items in the assessment;
-- metering and billing, tenant export, and break-glass access.
-
-Before relying on tone figures or AI commentary, configure and evaluate an AI model (`npm run eval:ai -- --llm`).
+**Still blocking production** (PRODUCTION_READINESS_ASSESSMENT.md): an OIDC identity provider with enforced MFA, staging with
+PITR, an external penetration test, and legal review.

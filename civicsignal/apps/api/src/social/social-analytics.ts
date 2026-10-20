@@ -130,6 +130,19 @@ export class SocialAnalyticsService {
       for (const r of ents.rows) { const g = em.get(r.id) ?? { entityId: r.id, name: r.name, news: 0, social: 0 }; g[r.channel as 'news' | 'social'] += r.n; em.set(r.id, g); }
       const crossPlatformEntities = [...em.values()].filter((x) => x.social > 0).sort((a, b) => b.social + b.news - (a.social + a.news)).slice(0, 15);
 
+      // Tone toward a monitored entity (entity-level results exist only from the AI-model path), social records only.
+      const entTone = await rows<{ id: string; name: string; label: string; uncertain: boolean; n: number }>(
+        `SELECT e.id, e.display_name AS name, sr.label, sr.uncertain, count(*)::int AS n FROM mentions m
+         JOIN sentiment_results sr ON sr.analysis_id = m.analysis_id AND sr.target_type = 'entity' JOIN entities e ON e.id = sr.target_entity_id
+         WHERE ${w} GROUP BY 1, 2, 3, 4`);
+      const et = new Map<string, { entityId: string; name: string; results: number; uncertain: number; counts: Record<string, number> }>();
+      for (const r of entTone) {
+        const g = et.get(r.id) ?? { entityId: r.id, name: r.name, results: 0, uncertain: 0, counts: Object.fromEntries(LABELS.map((l) => [l, 0])) };
+        g.results += r.n; if (r.uncertain) g.uncertain += r.n; else g.counts[r.label] = (g.counts[r.label] ?? 0) + r.n;
+        et.set(r.id, g);
+      }
+      const entitySentiment = [...et.values()].sort((a, b) => b.results - a.results).slice(0, 15);
+
       const fresh = (await c.query<{ latest: Date | null; oldest_metrics: Date | null }>(
         `SELECT max(m.discovered_at) AS latest, min(m.engagement_observed_at) AS oldest_metrics FROM mentions m WHERE ${w}`, p)).rows[0]!;
 
@@ -141,7 +154,7 @@ export class SocialAnalyticsService {
         sentiment, conversations, hashtags: hashtags.map((h) => ({ tag: h.tag, records: h.n, share: pct(h.n, withTags) })),
         topics: topicRows.map((r) => ({ topic: r.topic, label: E.topicLabels[r.topic] ?? r.topic, records: r.n, share: pct(r.n, analysedTotal) })),
         engagement, accounts: accounts.map((a) => ({ platform: a.platform, accounts: a.accounts, recordsWithAccountId: a.with_ref, records: a.records })),
-        connectors, crossPlatformEntities,
+        connectors, crossPlatformEntities, entitySentiment,
         freshness: { latestRecordDiscoveredAt: fresh.latest, oldestMetricsObservedAt: fresh.oldest_metrics },
         definitions: {
           records: 'Original social records (posts, videos, comments) matched to your visible projects, by publication time (discovery time when absent).',
@@ -154,6 +167,7 @@ export class SocialAnalyticsService {
           engagement: 'Only metrics returned by the provider, as of the time shown. Not reach, impressions or audience size. Different platforms’ metrics are never added together.',
           accounts: 'Distinct provider account/channel ids among posts (not comments); only stored when the author field is permitted.',
           crossPlatformEntities: 'Records mentioning the resolved entity, counted separately for news articles and social records.',
+          entitySentiment: 'Tone expressed toward a specific entity in social records (only produced by the AI-model analyser; the rule-based baseline gives record-level tone only). Counts of entity-level results, uncertain ones separately; not combined with record-level tone.',
           caution: 'Volume and engagement show attention among collected records, not public opinion or consensus.',
         },
       };

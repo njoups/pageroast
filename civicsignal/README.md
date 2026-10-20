@@ -8,7 +8,9 @@ scheduling) are done. A production-readiness hardening pass (2026-10-20) added s
 reset, a tamper-evident audit chain, enforced retention, legal hold, four-eyes deletion, readiness and metrics, CI security stages and
 a verified backup/restore drill. It is **not** production-ready yet and holds no certification: see
 [docs/PRODUCTION_READINESS_ASSESSMENT.md](docs/PRODUCTION_READINESS_ASSESSMENT.md) (blocking items: MFA via an IdP, staging with
-PITR, an external penetration test, legal review). Without `ANTHROPIC_API_KEY`, analysis uses a
+PITR, an external penetration test, legal review). Social listening (2026-10-20): a YouTube Data API connector with quota,
+budget and data-rights controls, contract-tested against a mock API but **not verified live** (no API key available); see
+[docs/SOCIAL_CONNECTORS.md](docs/SOCIAL_CONNECTORS.md). Without `ANTHROPIC_API_KEY`, analysis uses a
 rule-based baseline, labelled as such, whose tone estimates are weak; the AI-model adapter has not yet been verified against the
 live API. Email has been verified against a local SMTP server only; WhatsApp is an unconfigured adapter.
 Current, evidence-based status: [docs/IMPLEMENTATION_STATUS.md](docs/IMPLEMENTATION_STATUS.md). Connectors: [docs/CONNECTORS.md](docs/CONNECTORS.md).
@@ -85,4 +87,5 @@ The suite drops and recreates the `civicsignal_test` database and flushes Redis 
 | Source licences | every source you enable | **required**: only a recorded basis allows collection |
 | Licensed news provider / publisher API | a second commercial connector | not contracted; not built |
 | `ANTHROPIC_API_KEY` | AI-model analysis (docs/AI_PROVIDERS.md) | **not configured**: rule-based baseline in use, labelled in the UI |
-| Social APIs | Milestones 5–7 | none configured |
+| YouTube Data API key | social listening (YouTube connector) | **not configured**: connector built and contract-tested; set per connector in the Social listening workspace |
+| Other social APIs (X, Meta, TikTok) / licensed social data | further social connectors | not contracted; capability matrix only |

@@ -112,6 +112,7 @@ export default function MentionsPage() {
                   </span>
                 </div>
                 <p className="mt-1 text-xs text-slate-600">
+                  {m.channel === 'social' && <span className="mr-1 rounded bg-blue-50 px-1.5 py-0.5 text-xs font-medium text-blue-800">Social · {m.platform === 'youtube' ? 'YouTube' : m.platform} {m.content_type}</span>}
                   <span className="font-medium">{m.publisher ?? m.publisher_domain}</span> ({m.publisher_domain}) · via {m.source_name}
                   {m.author && <> · {m.author}</>}
                 </p>

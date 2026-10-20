@@ -91,7 +91,7 @@ export class SocialService {
       WHERE connector_id = $1 AND acknowledged_at IS NULL ORDER BY created_at DESC LIMIT 10`, [r.connector_id])).rows;
     const paused = r.paused_until && new Date(r.paused_until) > new Date() ? { until: r.paused_until, reason: r.paused_reason } : null;
     return {
-      id: r.id, name: r.name, provider: d.provider, providerName: d.displayName, kind: r.kind,
+      id: r.id, connectorId: r.connector_id, name: r.name, provider: d.provider, providerName: d.displayName, kind: r.kind,
       enabled: r.enabled, authorizationStatus: r.authorization_status, authorizationBasis: r.authorization_basis,
       config: r.config, permittedFields: r.permitted_fields, refreshIntervalSeconds: r.refresh_interval_seconds, retentionDays: r.retention_days,
       credentials: { required: true, label: d.auth.credentialLabel, configured: r.has_credentials, hint: r.credentials_hint ?? null, updatedAt: r.credentials_updated_at ?? null },

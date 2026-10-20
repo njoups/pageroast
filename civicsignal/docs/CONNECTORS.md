@@ -6,9 +6,11 @@
 |---|---|---|---|
 | `feed`: RSS 2.0, RSS 1.0 (RDF), Atom | `rss` / `atom` | none | **Verified live**: ANTARA News Terkini and CNN Indonesia Nasional, see below |
 | `gdelt`: GDELT DOC 2.0 article list | `licensed_provider` (open-data licence) | none | **Implemented and contract-tested; NOT verified live.** Every live attempt from this environment got HTTP 429/503 from GDELT |
+| `youtube`: YouTube Data API v3 (social) | `social_api` | API key (encrypted) | **Implemented and contract-tested against a mock API; NOT verified live** (no API key available). Configured through `/social/connectors`; see [SOCIAL_CONNECTORS.md](SOCIAL_CONNECTORS.md) |
 
-There is no connector for a commercial licensed provider or publisher API yet. The credential storage it would need is built
-(AES-256-GCM, `PUT /sources/:id/credentials`), but no connector uses it today; the API refuses credentials for `feed` and `gdelt`.
+There is no connector for a commercial licensed news provider or publisher API yet. The YouTube connector is the first to use
+the encrypted credential storage (AES-256-GCM); the API refuses credentials for `feed` and `gdelt`. Social connectors cannot be
+edited through `PATCH /sources/:id` (400 `use_social_api`), because provider limits are enforced by the social API.
 
 ## Registering a source (UI: Sources → Add source; API: `POST /api/v1/organizations/:orgId/sources`)
 

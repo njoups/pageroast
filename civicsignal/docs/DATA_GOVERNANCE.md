@@ -117,10 +117,34 @@ Retention is **off until a tenant enables it** (`PUT …/data-governance/control
 
 Report runs keep the ids of cited records. Deleting a record also removes it from `report_run_sources` (cascade). The stored report model keeps only the headline, publisher and URL it quoted.
 
+## Social platform data (implemented 2026-10-20)
+Full detail: [SOCIAL_CONNECTORS.md](SOCIAL_CONNECTORS.md), sections 2 and 4.
+
+- **Permitted collection:** public content reachable with the customer's own API key, within the provider's terms. No
+  private accounts, no scraping, no bypassing quotas or access controls. 401/403 are never worked around.
+- **Permitted storage:**
+  - Each connector carries the provider's rights snapshot. YouTube: at most 30 days per record unless refreshed; statistics at most 30 days.
+  - Records carry `provider_delete_by` and `refresh_due_at`, and the lifecycle job refreshes or deletes them (records gone at the provider are purged).
+  - Connector retention can't exceed the provider limit.
+- **Permitted fields:** title, link and time by default, plus excerpt and metrics. Author names and account ids are off by default.
+  Public comments are off by default; they are personal data of private individuals, so check the legal basis before enabling.
+- **Derived analysis:**
+  - YouTube forbids derived metrics unless the derived-metrics amendment is accepted, so AI analysis of YouTube records runs only
+    after an owner/admin records that approval.
+  - Results are labelled as CivicSignal estimates and stored apart from provider data.
+  - Commenters are never extracted as entities.
+- **Redistribution:** YouTube API data must not be sold, redistributed or sublicensed. Social records are excluded from reports
+  by default (reports cover news); exports carry links, not copies of video data.
+- **Metrics:** only metrics the provider returned, with the time they were observed. They are not summed across records or
+  platforms where the provider restricts aggregation, and are never presented as reach, impressions or public opinion.
+- **Legal hold vs provider deletion duty:** a legal hold stops the lifecycle job from deleting; the overdue records are counted,
+  audited and shown. Counsel must decide which obligation prevails.
+- **Customer visibility:** the social workspace shows each provider's coverage, limitations, verification date and data rights.
+
 ## Source licence registry
 The `sources` table (with `connectors`) is the registry. No source is seeded. Operators enter the authorization basis.
 The two RSS sources used for live verification in the development database were marked authorized *for a limited integration test only*.
 Their basis text says so, and their publishers' terms have **not** been reviewed (see CONNECTORS.md).
 
 ## Open items for legal review
-UU PDP applicability to public-figure mentions and extracted names · hosting location · cross-border transfer of source text to an AI provider and the provider's retention terms · whether sending licensed excerpts to an AI provider is permitted by each source licence · publisher terms for RSS reuse and excerpts.
+UU PDP applicability to public-figure mentions and extracted names · processing of public social comments (personal data of private individuals) and the lawful basis for monitoring them · reconciling legal holds with provider deletion obligations (YouTube 30-day limit) · hosting location · cross-border transfer of source text to an AI provider and the provider's retention terms · whether sending licensed excerpts to an AI provider is permitted by each source licence · publisher terms for RSS reuse and excerpts.

@@ -29,6 +29,8 @@ Findings, open risks and acceptance criteria: [PRODUCTION_READINESS_ASSESSMENT.m
 | User enumeration: login and reset are uniform; **registration reveals existing emails** (documented trade-off; disable open registration in production) | 🟡 |
 | MFA | ⬜ **not implemented**: the local identity provider does not support it; an OIDC IdP with MFA is required before production |
 | Dependency, licence, secret and image scanning in CI | ✅ (SUPPLY_CHAIN.md) |
+| Social provider credentials (YouTube API key): encrypted per connector, sent only in the `X-Goog-Api-Key` header (never in URLs), never returned, logged or echoed in errors; connection tests rate-limited; test-only base-URL override refused in production | ✅ tested |
+| Social data obligations: provider storage limits, refresh-or-delete job, derived-analysis approval gate, tenant-isolated usage/budget/lifecycle tables | ✅ tested (mock provider) |
 | Secrets | env or secret manager only; `.env.example` holds empty placeholders; secret scan of tree and history gates CI | ✅ |
 
 ## Threat model (summary)
@@ -51,6 +53,8 @@ Findings, open risks and acceptance criteria: [PRODUCTION_READINESS_ASSESSMENT.m
 | Access to investigation notes (M4) | notes readable only with `alerts:read` and project visibility; not copied into audit logs or webhook payloads; append-only |
 | Cross-tenant alert data (M4) | forced RLS on every alerting table; recipients/assignees validated against membership and project access at write and send time |
 | Audit tampering | append-only grants + trigger; per-tenant hash chain whose head the app role cannot read or write; `audit_verify_chain` detects edits, deletions and reordering; verified after every restore drill |
+| Social content as attack vector (prompt injection in comments, malicious links) | wrapped as untrusted, output evidence-checked, no tools; commenters never become entities; links only via `safeHref` |
+| Provider credential misuse / quota exhaustion by a tenant user | only `sources:manage` can set keys, test (5 per 10 min) or sync; budgets and provider-quota pre-flight pause collection |
 | Restore widening privileges | backups keep ACLs; restore applies them exactly; drill compares a privilege fingerprint and fails on difference |
 | Prompt-injected cost or data exfiltration via summaries | quota and rate limits on summaries; provider input capped; output is evidence-checked |
 
@@ -120,6 +124,7 @@ Platform administrators hold **no** tenant permissions. Project-scoped reads for
 | Owner and migration password | Managed DB console; update `MIGRATION_DATABASE_URL` in the secret manager | Migrate task only |
 | `REDIS_PASSWORD` | Redis `CONFIG SET requirepass` or managed console, then `REDIS_URL`, then redeploy | Queues reconnect |
 | `METRICS_TOKEN` | Set the new value in the secret manager and the scraper, then redeploy | Scrapes fail until both are updated |
+| YouTube API key (per connector) | Create a new key in Google Cloud, `PUT /social/connectors/:id/credentials`, `POST …/test`, then delete the old key in Google Cloud | Collection continues with the new key |
 | `ANTHROPIC_API_KEY`, SMTP credentials | At the provider; set the new value; restart api and worker | — |
 | All sessions | `UPDATE sessions SET revoked_at = now() WHERE revoked_at IS NULL` | Everyone logs in again |
 

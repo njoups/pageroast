@@ -100,6 +100,16 @@ The scheduler reads `ingestion_schedule` in system context. Every read or write 
 The browser never talks to the database directly. Browser→API calls are same-origin through the Next.js rewrite
 (`/api/*`), so session cookies are first-party and `SameSite=Lax`.
 
+### Social listening (Prompt 07)
+```
+scheduler ─> ingestion queue ─> worker: YoutubeConnector (SafeHttpClient, X-Goog-Api-Key) ─> pipeline (social fields, provider-id dedup,
+            ▲ pre-flight: pause / budget / provider quota            refresh-on-reseen, 30-day deadlines, provider_usage)
+            │                                                         └─> analysis queue only if provider rights allow (approval)
+lifecycle job (15 min): refresh due records by id ─> update | purge (gone at provider / past deadline) | blocked by legal hold
+```
+News and social records share tables and pipeline but are never combined silently: executive analytics, reports, dashboard
+aggregates and alert rules default to news; `/social/analytics` reports social data with its own definitions.
+
 ## API modules (apps/api/src)
 | Module | Responsibility |
 |---|---|
@@ -111,6 +121,7 @@ The browser never talks to the database directly. Browser→API calls are same-o
 | `audit` | Append-only audit writer (event id, outcome, request id, redacted metadata) and viewer; a trigger hash-chains every event per tenant |
 | `authz` | Role → permission matrix, `@RequirePermission()` guard |
 | `health` | `/health/live` (process), `/health/ready` (database, Redis, migrations current), token-protected `/metrics` (HTTP, queue, ingestion, report, notification, AI-quota and DB-size gauges); request metrics and access-log middleware |
+| `social` | Social listening: provider descriptors and capability matrix (`providers.ts`), provider quota, budgets and cost estimates (`quota.ts`), derived-analysis rights gate (`rights.ts`), lifecycle refresh-or-delete job (`lifecycle.service.ts`), `/social` API and social analytics. Social connectors are sources of a social kind (`youtube`) and flow through the same ingestion pipeline and AI analysis. |
 | `governance` | Retention enforcement (`RetentionService`, daily per tenant, advisory-locked, dry-run counts, ledger), legal hold, four-eyes deletion requests, `purgeMentions` (cascade + artifact expiry + analytics invalidation) |
 | `analytics` | Analytics engine (coverage, sentiment, share of voice, sources, topics, entities, issues, overview), hourly aggregation, cache, time-zone math |
 | `reports` | Report definitions, templates, generator (evidence workflow), PDF/CSV renderers, schedules, queue + scheduler, downloads |
@@ -149,7 +160,10 @@ audited break-glass grants (not built). Denied tenant access by a member is audi
 `{ "error": { "code": "validation_failed", "message": "...", "details": [...], "requestId": "..." } }`
 
 ## Data model
-See `db/migrations` (0001–0011). 0011 adds a search index found missing by the load test. 0010 adds session idle tracking,
+See `db/migrations` (0001–0012). 0012 adds social listening: the `youtube` connector kind, provider rights, approval and pause
+state on connectors, platform fields on mentions (platform, content type, provider id, parent, hashtags, engagement as returned,
+refresh and deletion deadlines), analysis provenance (news vs social), `provider_usage`, `provider_pricing`, `social_budgets`,
+`social_budget_events` and `provider_lifecycle_runs`. 0011 adds a search index found missing by the load test. 0010 adds session idle tracking,
 password-reset tokens, the audit hash chain (`audit_chain_heads`, `audit_verify_chain`), `tenant_data_controls` (legal hold),
 `retention_runs` and `deletion_requests`. 0009 is analytics and reporting. 0008 adds the alerting tables (see ALERT_RULES.md) and replaces the unused placeholder alert tables. 0007 adds `mention_analyses`, `entities`/`entity_aliases`, `project_topics`, `cluster_members`/`cluster_events`,
 `ai_summaries`, `ai_usage_records`, `ai_pricing`, `ai_prompt_versions`, `ai_tenant_settings`. Tables for alerts, reports and billing exist but are not yet used.

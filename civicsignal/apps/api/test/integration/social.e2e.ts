@@ -301,6 +301,8 @@ describe('social listening: YouTube connector (contract tests against a mock API
     expect(a.hashtags.find((h: { tag: string }) => h.tag === 'banjir')).toMatchObject({ records: 2, share: 100 });
     expect(a.definitions.caution).toMatch(/not public opinion/);
     expect(a.definitions.sentiment).toMatch(/never mixed/);
+    expect(Array.isArray(a.entitySentiment)).toBe(true);
+    expect(a.definitions.entitySentiment).toMatch(/not combined with record-level tone/);
     await api(viewer).get('/social/analytics').expect(403);
   });
 

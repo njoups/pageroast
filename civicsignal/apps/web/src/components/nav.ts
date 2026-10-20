@@ -9,6 +9,7 @@ export const NAV: NavItem[] = [
   { slug: 'analytics', label: 'Analytics', available: true, summary: 'Executive dashboard: coverage, tone, share of voice, issues, topics, entities and sources, each with its definition and period.' },
   { slug: 'stories', label: 'Stories', available: true, summary: 'Coverage of the same event grouped across publishers, with summaries that cite their records.' },
   { slug: 'reports', label: 'Reports', available: true, summary: 'Source-backed PDF and CSV reports, scheduling and report history.' },
+  { slug: 'social', label: 'Social listening', available: true, summary: 'Authorized social-platform connectors (YouTube), quotas, data-rights obligations and social analytics, kept separate from news.' },
   { slug: 'sources', label: 'Sources', available: true, summary: 'Source registry with licence, authorization status, retention and collection health.' },
   { slug: 'projects', label: 'Projects', available: true, summary: 'Monitoring projects' },
   { slug: 'team', label: 'Team', available: true, summary: 'Members, roles and invitations' },

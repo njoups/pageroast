@@ -97,6 +97,9 @@ Severity reflects impact if exploited or triggered in a multi-tenant government 
 | O16 | Low | `migrate` runs as root in the build-stage image | One-shot, no listening port | Dedicated non-root migrate stage |
 | O17 | Low | Registration reveals whether an email exists (documented trade-off); reset and login are uniform | Rate limits | Invite-only registration in production (disable open registration) |
 | O18 | Low | Web image is about 1 GB (full `node_modules`) | Size and surface | Next.js `output: 'standalone'` |
+| O20 | Medium | Social connectors are contract-tested only; no live verification (no YouTube key). Header authentication (`X-Goog-Api-Key`) is documented for Google APIs but unconfirmed for YouTube | Mock contract tests, documented blocker | Live test in staging per SOCIAL_CONNECTORS.md §10; `liveVerified` set with date |
+| O21 | Medium | Legal hold vs provider deletion duty (YouTube 30 days): the lifecycle job keeps records under hold and reports them as blocked, which may breach provider terms | Blocked obligations are audited and visible | Counsel decision recorded; procedure in RUNBOOK |
+| O22 | Low | YouTube quota is per Google Cloud project; connectors sharing a key track only their own usage | Documented; per-connector `quotaPerDay` | One key per connector, or key-level usage aggregation |
 | O19 | Low | Deleted data remains in backups until they expire; files already downloaded are outside system control | Documented to requesters (DATA_GOVERNANCE.md) | Backup lifecycle aligned with retention; re-apply deletions after restore (procedure exists) |
 
 ### Blocking before production

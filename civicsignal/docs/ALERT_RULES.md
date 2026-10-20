@@ -74,7 +74,8 @@ An AI model never decides severity. An AI summary, when available, is shown sepa
 ## Configuration reference
 ```jsonc
 {
-  "filters":   { "entityIds": [], "sourceIds": [], "topics": [], "keywords": "karhutla OR \"kabut asap\"" },
+  "filters":   { "entityIds": [], "sourceIds": [], "topics": [], "keywords": "karhutla OR \"kabut asap\"",
+                 "channels": ["news"] },   // default news only; ["news","social"] or ["social"] includes social-platform records
   "window":    { "minutes": 60, "comparison": "same_time_previous_days", "baselineWindows": 14 },
   "thresholds": { "minMentions": 5, "relativeChange": 2, "robustZ": 3, "minBaselineWindows": 5, "minPublishers": 1,
                   "negativeShift": 0.15, "minClassified": 20, "maxUncertainShare": 0.5, "zThreshold": 1.96,
@@ -131,3 +132,9 @@ it stops evaluating, and its versions and issues remain.
   would detect, with methods, values and limitations. It creates nothing and sends nothing.
 - **Preview of unsaved rules:** `POST …/alert-rules/preview` does the same for an unsaved configuration.
 - **Rate limit:** both share a limit of 10 per minute per organization, and both are audited.
+
+## Social records in detection
+Rules evaluate **news articles only** unless `filters.channels` includes `"social"`. The baseline comes from the same filtered
+population, so a rule that opts in compares social volume with social history, never with news. Social volume is attention among
+collected posts, not public opinion: prefer `minPublishers`/independent-source thresholds and review evidence before escalating.
+Records whose provider forbids derived analysis (YouTube without the recorded approval) have no tone, so tone rules ignore them.
