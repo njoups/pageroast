@@ -1,0 +1,6 @@
+{
+  "png-js": { "license": "UNKNOWN", "reviewed": "2026-10-20", "decision": "allowed", "note": "No license field in package.json; the shipped LICENSE file is MIT (Devon Govett). Transitive dependency of pdfkit." },
+  "@img/sharp-libvips-linux-x64": { "license": "LGPL-3.0-or-later", "reviewed": "2026-10-20", "decision": "allowed-with-conditions", "note": "Optional native dependency of sharp, pulled in by Next.js image optimisation (not used by this app: no next/image). Dynamically linked, unmodified prebuilt library; LGPL obligations (notice, ability to replace the library) are met by shipping it as a separate file. Legal to confirm before redistribution of images." },
+  "@img/sharp-libvips-linuxmusl-x64": { "license": "LGPL-3.0-or-later", "reviewed": "2026-10-20", "decision": "allowed-with-conditions", "note": "As @img/sharp-libvips-linux-x64 (musl build)." },
+  "@img/sharp-wasm32": { "license": "Apache-2.0 AND LGPL-3.0-or-later AND MIT", "reviewed": "2026-10-20", "decision": "allowed-with-conditions", "note": "WebAssembly build of sharp/libvips; same LGPL considerations." }
+}
