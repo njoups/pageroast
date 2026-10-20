@@ -1,0 +1,128 @@
+{
+  "startedAt": "2026-10-20T04:40:23.270Z",
+  "host": {
+    "cpus": 4,
+    "cpuModel": "Intel(R) Xeon(R) Processor @ 2.80GHz",
+    "memGB": 15.7,
+    "node": "v22.22.0"
+  },
+  "dataset": {
+    "tenants": 3,
+    "mentionsPerTenant": 20000
+  },
+  "config": {
+    "durationS": 30,
+    "concurrency": 16
+  },
+  "scenarios": [
+    {
+      "scenario": "reports.generate",
+      "concurrency": 9,
+      "durationS": 7.7,
+      "requests": 9,
+      "okRate": 1,
+      "rps": 1.2,
+      "p50": 5635.3,
+      "p95": 7454.8,
+      "p99": 7454.8,
+      "max": 7454.8,
+      "statuses": {
+        "succeeded": 9
+      },
+      "enqueueStatuses": {
+        "202": 9
+      },
+      "enqueueErrors": [],
+      "resources": {
+        "api": {
+          "cpuPctOfOneCore": 4.7,
+          "rssMaxMB": 134
+        },
+        "worker": {
+          "cpuPctOfOneCore": 45.4,
+          "rssMaxMB": 258
+        },
+        "db": {
+          "xactsPerSec": 23,
+          "cacheHitPct": 99.96,
+          "blocksReadFromDisk": 2226,
+          "tempMB": 0,
+          "deadlocks": 0,
+          "maxActive": 3,
+          "maxConnections": 5
+        }
+      }
+    },
+    {
+      "scenario": "ingestion.collect",
+      "concurrency": 6,
+      "durationS": 5.7,
+      "requests": 6,
+      "okRate": 1,
+      "rps": 1,
+      "p50": 4817.8,
+      "p95": 5555.3,
+      "p99": 5555.3,
+      "max": 5555.3,
+      "statuses": {
+        "succeeded": 6
+      },
+      "itemsPerFeed": 200,
+      "itemsInserted": 1200,
+      "triggerErrors": [],
+      "resources": {
+        "api": {
+          "cpuPctOfOneCore": 3.3,
+          "rssMaxMB": 134
+        },
+        "worker": {
+          "cpuPctOfOneCore": 78.9,
+          "rssMaxMB": 273
+        },
+        "db": {
+          "xactsPerSec": 158,
+          "cacheHitPct": 99.63,
+          "blocksReadFromDisk": 1479,
+          "tempMB": 0,
+          "deadlocks": 0,
+          "maxActive": 3,
+          "maxConnections": 8
+        }
+      }
+    },
+    {
+      "scenario": "ai.baseline-backfill",
+      "concurrency": 3,
+      "durationS": 9.5,
+      "requests": 829,
+      "rps": 87.2,
+      "okRate": 1,
+      "statuses": {
+        "tenant0": "202 queued=278",
+        "tenant1": "202 queued=287",
+        "tenant2": "202 queued=264"
+      },
+      "remaining": 0,
+      "resources": {
+        "api": {
+          "cpuPctOfOneCore": 2.4,
+          "rssMaxMB": 137
+        },
+        "worker": {
+          "cpuPctOfOneCore": 42.8,
+          "rssMaxMB": 282
+        },
+        "db": {
+          "xactsPerSec": 303,
+          "cacheHitPct": 99.84,
+          "blocksReadFromDisk": 837,
+          "tempMB": 0,
+          "deadlocks": 0,
+          "maxActive": 3,
+          "maxConnections": 8
+        }
+      }
+    }
+  ],
+  "finishedAt": "2026-10-20T04:40:47.383Z"
+}

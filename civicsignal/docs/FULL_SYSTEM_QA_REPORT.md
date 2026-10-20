@@ -237,7 +237,31 @@ No assertion was loosened and no test was skipped. AR-01 and AR-02 were also run
 
 ## 9. Performance (synthetic data)
 
-_Load run on the fixed build is in progress; results are added in the next commit._
+Synthetic data only: 3 tenants × 20,000 mentions (61,200 records after earlier ingestion runs) in the disposable database `civicsignal_load`. The API, worker, PostgreSQL and the load generator all shared one 4-vCPU container (Xeon 2.8 GHz), with no TLS and no network between tiers. Scripts: `scripts/load/seed.mjs` and `scripts/load/run.mjs`. Raw output: `docs/load-results/2026-10-20-qa-foreground.jsonl` and `docs/load-results/2026-10-20-qa-background.json`.
+
+Run on the fixed build (commit `132a5a1`, migration 0014), 30-second closed loops, 0 errors in every scenario:
+
+| Scenario | Conc. | Req/s | p50 ms | p95 ms | p99 ms | Previous run (LOAD_TESTING.md): req/s, p95 |
+|---|---|---|---|---|---|---|
+| auth.login | 4 | 28.9 | 134 | 169 | 208 | 38.5, 124 |
+| search | 16 | 106.2 | 148 | 208 | 237 | 167.9, 132 |
+| analytics | 16 | 249.9 | 46 | 70 | 709 | 335.1, 54 |
+| alerts | 16 | 468.2 | 33 | 52 | 62 | 535.9, 45 |
+| mixed (3 tenants) | 32 | 177.3 | 140 | 420 | 1,173 | 252.0, 161 |
+
+| Background scenario | Outcome | p50 | p95 |
+|---|---|---|---|
+| reports.generate (9 weekly reports) | 9 succeeded | 5.6 s | 7.5 s |
+| ingestion.collect (6 feeds × 200 items) | 6 succeeded, 1,200 records inserted | 4.8 s | 5.6 s |
+| ai.baseline-backfill (829 records queued) | Queue drained in 9.5 s (≈ 87 records/s), 0 remaining | — | — |
+
+How to read these numbers:
+
+- **Throughput is lower than the earlier run in LOAD_TESTING.md.** The two runs used different container hosts (2.1 GHz vs 2.8 GHz Xeon), so the difference has not been attributed to code. Login also dropped by about 25%, and its cost is pure scrypt CPU that these changes did not touch, which points to host variance. A same-host A/B comparison of the baseline and fixed builds was **not** done.
+- **Mixed-scenario tail latency (p95 420 ms, p99 1.2 s).** This comes from the fixed 10-connection database pool queuing at concurrency 32, which is a known item in LOAD_TESTING.md.
+- **The backfill rate is not comparable with the earlier run.** It covered fewer records, and those were records the earlier baseline pass had not analysed.
+- **Incident during the measurement.** The first worker process crashed when the parallel test suite reset the shared `civicsignal_app` role password on the same disposable PostgreSQL cluster. The background scenarios were re-run with a fresh worker. The foreground scenarios are unaffected because they do not use the worker. An earlier run on the pre-fix build had also competed for CPU with the audit jobs, and its numbers are discarded.
+- **No capacity claim is made.** See the limits in LOAD_TESTING.md. A production capacity statement requires staging-sized infrastructure and a separate load-generator host.
 
 ## 10. Not verified against real external services
 

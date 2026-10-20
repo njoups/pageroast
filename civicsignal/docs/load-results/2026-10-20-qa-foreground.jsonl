@@ -1,0 +1,5 @@
+{"scenario":"auth.login","conc":4,"rps":28.9,"p50":133.9,"p95":169.2,"p99":208.2,"okRate":1,"statuses":{"200":871}}
+{"scenario":"search","conc":16,"rps":106.2,"p50":148.1,"p95":208,"p99":236.6,"okRate":1,"statuses":{"200":3200}}
+{"scenario":"analytics","conc":16,"rps":249.9,"p50":45.5,"p95":69.6,"p99":709.3,"okRate":1,"statuses":{"200":7502}}
+{"scenario":"alerts","conc":16,"rps":468.2,"p50":32.9,"p95":51.5,"p99":61.9,"okRate":1,"statuses":{"200":14057}}
+{"scenario":"mixed.concurrent-tenants","conc":32,"rps":177.3,"p50":139.7,"p95":419.5,"p99":1173.4,"okRate":1,"statuses":{"200":5352}}
