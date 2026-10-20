@@ -1,5 +1,7 @@
 export interface AppConfig {
   nodeEnv: 'development' | 'test' | 'production';
+  /** Deployment environment (docs/DEPLOYMENT.md). staging and production get the strict deployment checks. */
+  appEnv: 'local' | 'staging' | 'production';
   port: number;
   /** Connection string for the restricted application role (RLS enforced). */
   databaseUrl: string;
@@ -7,6 +9,13 @@ export interface AppConfig {
   migrationDatabaseUrl: string;
   appOrigins: string[];
   sessionTtlSeconds: number;
+  /** A session unused for this long is rejected (sliding idle timeout, in addition to the absolute TTL). */
+  sessionIdleSeconds: number;
+  passwordResetTtlMinutes: number;
+  /** Serve the OpenAPI UI at /api/docs. Off by default in production. */
+  apiDocsEnabled: boolean;
+  /** Bearer token for GET /metrics (Prometheus text format). Metrics are disabled when unset. */
+  metricsToken: string | null;
   cookieSecure: boolean;
   scryptN: number;
   trustProxy: boolean;
@@ -99,13 +108,19 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
     if (!v) throw new Error(`Missing required environment variable ${key}`);
     return v;
   };
+  const appEnv = (env.APP_ENV || (prod ? 'production' : 'local')) as AppConfig['appEnv'];
+  if (!['local', 'staging', 'production'].includes(appEnv)) throw new Error('APP_ENV must be local, staging or production');
   const cfg: AppConfig = {
-    nodeEnv,
+    nodeEnv, appEnv,
     port: Number(env.PORT ?? 4000),
     databaseUrl: required('DATABASE_URL'),
     migrationDatabaseUrl: env.MIGRATION_DATABASE_URL ?? required('DATABASE_URL'),
     appOrigins: (env.APP_ORIGINS ?? 'http://localhost:3000').split(',').map((s) => s.trim()).filter(Boolean),
     sessionTtlSeconds: Number(env.SESSION_TTL_SECONDS ?? 12 * 3600),
+    sessionIdleSeconds: Number(env.SESSION_IDLE_SECONDS ?? 2 * 3600),
+    passwordResetTtlMinutes: Number(env.PASSWORD_RESET_TTL_MINUTES ?? 30),
+    apiDocsEnabled: env.API_DOCS_ENABLED ? env.API_DOCS_ENABLED === 'true' : !prod,
+    metricsToken: env.METRICS_TOKEN || null,
     cookieSecure: env.COOKIE_SECURE ? env.COOKIE_SECURE === 'true' : prod,
     scryptN: Number(env.SCRYPT_N ?? 2 ** 15),
     trustProxy: env.TRUST_PROXY === 'true',
@@ -181,17 +196,30 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
   if (cfg.email.smtpUrl && !/^smtps?:\/\//.test(cfg.email.smtpUrl)) throw new Error('SMTP_URL must start with smtp:// or smtps://');
   if (cfg.email.smtpUrl && !cfg.email.from) throw new Error('EMAIL_FROM is required when SMTP_URL is set');
   if (cfg.email.from && /[\r\n]/.test(cfg.email.from)) throw new Error('EMAIL_FROM must be a single line');
+  if (cfg.credentialsKey && Buffer.from(cfg.credentialsKey, 'base64').length !== 32) throw new Error('CREDENTIALS_KEY must be 32 random bytes, base64-encoded (openssl rand -base64 32)');
+  if (cfg.sessionIdleSeconds < 300 || cfg.sessionIdleSeconds > cfg.sessionTtlSeconds) throw new Error('SESSION_IDLE_SECONDS must be between 300 and SESSION_TTL_SECONDS');
+  if (cfg.sessionTtlSeconds > 7 * 86_400) throw new Error('SESSION_TTL_SECONDS may not exceed 7 days');
+  if (!/^https?:\/\//.test(cfg.appBaseUrl)) throw new Error('APP_BASE_URL must be an http(s) URL');
   if (!['anthropic', 'baseline', 'test'].includes(cfg.ai.provider)) throw new Error('AI_PROVIDER must be anthropic, baseline or test');
   if (!['low', 'medium', 'high', 'xhigh', 'max'].includes(cfg.ai.effort)) throw new Error('AI_EFFORT must be low|medium|high|xhigh|max');
   if (prod) {
     if (!cfg.cookieSecure) throw new Error('COOKIE_SECURE must be true in production');
     if (cfg.scryptN < 2 ** 15) throw new Error('SCRYPT_N must be >= 32768 in production');
-    if (!env.MIGRATION_DATABASE_URL) throw new Error('MIGRATION_DATABASE_URL must be set explicitly in production');
-    if (cfg.migrationDatabaseUrl === cfg.databaseUrl) throw new Error('Application and migration database roles must differ in production');
+    // The API and worker run with the restricted application role only; the owner connection belongs to the migration job.
+    if (env.MIGRATION_DATABASE_URL && env.MIGRATION_DATABASE_URL === cfg.databaseUrl) throw new Error('Application and migration database roles must differ in production');
+    if (!cfg.rateLimitEnabled) throw new Error('RATE_LIMIT_ENABLED=false is refused in production');
+    if (cfg.metricsToken && cfg.metricsToken.length < 32) throw new Error('METRICS_TOKEN must be at least 32 characters');
     if (cfg.ingestion.allowPrivateHosts) throw new Error('INGESTION_ALLOW_PRIVATE_HOSTS is for tests only and is refused in production');
     if (cfg.ai.provider === 'test') throw new Error('AI_PROVIDER=test is for automated tests only and is refused in production');
     if (cfg.ai.provider === 'anthropic' && !cfg.ai.anthropicApiKey) throw new Error('AI_PROVIDER=anthropic requires ANTHROPIC_API_KEY');
     if (cfg.alerts.webhookAllowHttp) throw new Error('ALERTS_WEBHOOK_ALLOW_HTTP is for tests only and is refused in production');
+  }
+  if (prod && appEnv !== 'local') {
+    // Deployed environments (staging, production): TLS-only origins, shared Redis, no local-only shortcuts.
+    if (!cfg.redisUrl) throw new Error(`REDIS_URL is required when APP_ENV=${appEnv} (queues and shared rate limits)`);
+    for (const o of cfg.appOrigins) if (!o.startsWith('https://')) throw new Error(`APP_ORIGINS must use https when APP_ENV=${appEnv} (got ${o})`);
+    if (!cfg.appBaseUrl.startsWith('https://')) throw new Error(`APP_BASE_URL must use https when APP_ENV=${appEnv}`);
+    if (!cfg.trustProxy) throw new Error(`TRUST_PROXY=true is required when APP_ENV=${appEnv} (the API must run behind the TLS edge proxy)`);
   }
   return cfg;
 }

@@ -15,6 +15,7 @@ import { ProjectsService } from '../projects/projects.service';
 import { AnalysisEnqueuer } from './analysis-queue';
 import { analysisKey } from './analysis.service';
 import { AnalyticsFilter, mentionConditions, Params } from './filters';
+import { withVisibleLabels } from './cluster-visibility';
 import { ANALYSIS_PROVIDER, type AnalysisProvider } from './providers';
 import { DEFAULT_TOPICS, TAXONOMY_VERSION } from './taxonomy';
 import { normalizeName } from './text';
@@ -76,6 +77,7 @@ export class AnalysisApiService {
       let cluster = null;
       if (m.cluster_id) {
         cluster = (await c.query(`SELECT id, label, member_count, independent_count, publisher_count, confidence, first_seen_at, last_seen_at, version FROM story_clusters WHERE id = $1 AND status = 'active'`, [m.cluster_id])).rows[0] ?? null;
+        if (cluster) [cluster] = await withVisibleLabels(c, auth, t, [cluster]);
       }
       const current = history.find((h) => h.is_current) ?? null;
       return {
@@ -93,7 +95,7 @@ export class AnalysisApiService {
     if (!this.redis) return;
     const k = `${KEY_PREFIX}:reprocess:${tenantId}:${Math.floor(Date.now() / 60_000)}`;
     const n = await this.redis.incr(k); if (n === 1) await this.redis.expire(k, 120);
-    if (n > limit) throw new AppError(429, 'rate_limited', `Reprocessing is limited to ${limit} requests per minute per organization`);
+    if (n > limit) throw new AppError(429, 'rate_limited', `AI work requests are limited to ${limit} per minute per organization`);
   }
 
   async reprocess(auth: AuthContext, t: TenantContext, id: string, meta: RequestMeta) {
@@ -169,7 +171,7 @@ export class AnalysisApiService {
           count(DISTINCT m.id)::int AS visible_members
         FROM story_clusters sc JOIN cluster_members cm ON cm.cluster_id = sc.id AND cm.removed_at IS NULL JOIN mentions m ON m.id = cm.mention_id
         WHERE sc.status = 'active' AND ${w} GROUP BY sc.id ORDER BY sc.last_seen_at DESC LIMIT ${p.add(f.limit ?? 30)}`, p.values)).rows;
-      return { clusters: rows };
+      return { clusters: await withVisibleLabels(c, auth, t, rows) };
     });
   }
 
@@ -182,12 +184,27 @@ export class AnalysisApiService {
         FROM cluster_members cm JOIN mentions m ON m.id = cm.mention_id WHERE cm.cluster_id = ${p.add(id)} AND cm.removed_at IS NULL AND ${w}
         ORDER BY coalesce(m.published_at, m.discovered_at)`, p.values)).rows;
       if (!cl || members.length === 0) throw notFound('Story cluster');   // no visible member → not visible at all
-      const events = (await c.query(`SELECT event, mention_id, details, at FROM cluster_events WHERE cluster_id = $1 ORDER BY at DESC LIMIT 50`, [id])).rows;
       const visible = new Set(members.map((m) => m.id));
+      const all = seesAllProjects(t.role);
+      // Restricted roles: only events about records they can see; relabel details (headline text) only for visible-only labels.
+      const events = (await c.query(`SELECT event, mention_id, details, at FROM cluster_events WHERE cluster_id = $1 ORDER BY at DESC LIMIT 50`, [id])).rows
+        .filter((e) => all || (e.mention_id ? visible.has(e.mention_id) : true))
+        .map((e) => (all || e.event !== 'relabelled' ? e : { ...e, details: {} }));
       const summaries = (await c.query(`SELECT id, status, summary_text, claims, conflicts, uncertainty_notes, supporting_mention_ids, method, provider, model, prompt_version, generated_at
         FROM ai_summaries WHERE scope = 'cluster' AND cluster_id = $1 AND is_current`, [id])).rows
-        .map((s) => ({ ...s, claims: (s.claims as Array<{ supportingMentionIds: string[] }>).filter((cl2) => cl2.supportingMentionIds.every((x) => visible.has(x))) }));
-      return { cluster: cl, members, hiddenMembers: cl.member_count - members.length, events, summary: summaries[0] ?? null };
+        .map((s) => {
+          const ids = (s.supporting_mention_ids as string[] | null) ?? [];
+          const complete = ids.every((x) => visible.has(x));
+          const ok = (refs: string[] | undefined) => (refs ?? []).every((x) => visible.has(x));
+          return { ...s,
+            // Free text written from records the caller cannot see is withheld; individually supported claims remain.
+            summary_text: complete ? s.summary_text : null, partial: !complete,
+            supporting_mention_ids: ids.filter((x) => visible.has(x)),
+            claims: (s.claims as Array<{ supportingMentionIds: string[] }>).filter((cl2) => ok(cl2.supportingMentionIds)),
+            conflicts: ((s.conflicts ?? []) as Array<{ supportingMentionIds?: string[] }>).filter((x) => ok(x.supportingMentionIds)) };
+        });
+      const [labelled] = await withVisibleLabels(c, auth, t, [{ ...cl, representative_mention_id: all || visible.has(cl.representative_mention_id) ? cl.representative_mention_id : null }]);
+      return { cluster: labelled, members, hiddenMembers: cl.member_count - members.length, events, summary: summaries[0] ?? null };
     });
   }
 
@@ -232,10 +249,18 @@ export class AnalysisApiService {
     });
   }
 
+  /** Restricted roles may only act on entities that appear in records they can see (same rule as GET entities/:id). */
+  private async assertEntityVisible(c: import('pg').PoolClient, auth: AuthContext, t: TenantContext, id: string) {
+    if (seesAllProjects(t.role)) return;
+    const p = new Params(); const w = mentionConditions(p, auth, t, { entityId: id }).join(' AND ');
+    if (!(await c.query(`SELECT 1 FROM mentions m WHERE ${w} LIMIT 1`, p.values)).rowCount) throw notFound('Entity');
+  }
+
   addAlias(auth: AuthContext, t: TenantContext, id: string, alias: string, meta: RequestMeta) {
     return this.db.withTenant(t.orgId, auth.userId, async (c) => {
       const e = (await c.query<{ entity_type: string }>('SELECT entity_type FROM entities WHERE id = $1', [id])).rows[0];
       if (!e) throw notFound('Entity');
+      await this.assertEntityVisible(c, auth, t, id);
       const n = normalizeName(alias);
       if (!n) throw badRequest('validation_failed', 'Alias has no letters or digits');
       const r = await c.query(`INSERT INTO entity_aliases (tenant_id, entity_id, entity_type, alias, normalized_alias, created_by) VALUES ($1,$2,$3,$4,$5,$6)
@@ -248,6 +273,7 @@ export class AnalysisApiService {
 
   removeAlias(auth: AuthContext, t: TenantContext, id: string, aliasId: string, meta: RequestMeta) {
     return this.db.withTenant(t.orgId, auth.userId, async (c) => {
+      await this.assertEntityVisible(c, auth, t, id);
       const r = await c.query('DELETE FROM entity_aliases WHERE id = $1 AND entity_id = $2 RETURNING alias', [aliasId, id]);
       if (!r.rowCount) throw notFound('Alias');
       await this.audit.record(c, { tenantId: t.orgId, actorUserId: auth.userId, action: 'entity.alias_removed', targetType: 'entity', targetId: id, metadata: { alias: r.rows[0].alias }, meta });
@@ -256,6 +282,7 @@ export class AnalysisApiService {
 
   async requestSummary(auth: AuthContext, t: TenantContext, projectId: string, dto: SummaryRequestDto, meta: RequestMeta) {
     if (!this.enqueuer.available) throw new AppError(503, 'queue_unavailable', 'The analysis queue (Redis) is not configured on this server');
+    await this.tenantRateLimit(t.orgId);
     const period = !!(dto.periodStart || dto.periodEnd);
     if (period && (!dto.periodStart || !dto.periodEnd || dto.periodEnd <= dto.periodStart)) throw badRequest('validation_failed', 'periodStart and periodEnd are both required, end after start');
     const id = await this.db.withTenant(t.orgId, auth.userId, async (c) => {
@@ -324,7 +351,8 @@ export class AnalysisController {
   @Post('mentions/:id/reprocess') @HttpCode(202) @RequirePermission('analysis:reprocess')
   reprocess(@Auth() a: AuthContext, @Tenant() t: TenantContext, @Param('id', ParseUUIDPipe) id: string, @Meta() m: RequestMeta) { return this.svc.reprocess(a, t, id, m); }
 
-  @Post('analysis/backfill') @HttpCode(202) @RequirePermission('analysis:reprocess')
+  // Tenant-wide and spends the tenant's AI budget: administrators only (project managers reprocess single records).
+  @Post('analysis/backfill') @HttpCode(202) @RequirePermission('ai:settings')
   backfill(@Auth() a: AuthContext, @Tenant() t: TenantContext, @Body() dto: BackfillDto, @Meta() m: RequestMeta) { return this.svc.backfill(a, t, dto, m); }
 
   // Organization-wide analytics moved to AnalyticsController (analytics/*) in Milestone 5; these project-scoped views remain.
@@ -356,7 +384,7 @@ export class AnalysisController {
 
   @Post('projects/:projectId/summaries') @HttpCode(202) @RequirePermission('reports:generate')
   reqSummary(@Auth() a: AuthContext, @Tenant() t: TenantContext, @Param('projectId', ParseUUIDPipe) p: string, @Body() dto: SummaryRequestDto, @Meta() m: RequestMeta) { return this.svc.requestSummary(a, t, p, dto, m); }
-  @Get('projects/:projectId/summaries') @RequirePermission('projects:read')
+  @Get('projects/:projectId/summaries') @RequirePermission('mentions:read')
   summaries(@Auth() a: AuthContext, @Tenant() t: TenantContext, @Param('projectId', ParseUUIDPipe) p: string) { return this.svc.summaries(a, t, p); }
 
   @Get('ai/usage') @RequirePermission('ai:settings')

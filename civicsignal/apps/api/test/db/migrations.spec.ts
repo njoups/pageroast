@@ -11,7 +11,7 @@ const REQUIRED = ['tenants', 'users', 'memberships', 'projects', 'project_member
   'alert_rule_versions', 'detected_issues', 'alert_evidence', 'alert_assignments', 'alert_notes', 'notification_preferences',
   'notification_deliveries', 'webhook_endpoints', 'webhook_deliveries', 'activity_hourly', 'topic_activity_daily', 'alert_evaluations',
   'analytics_hourly', 'analytics_state', 'analytics_cache', 'report_definitions', 'report_schedules', 'report_runs', 'report_run_sources',
-  'report_artifacts', 'report_deliveries'];
+  'report_artifacts', 'report_deliveries', 'password_reset_tokens', 'audit_chain_heads', 'tenant_data_controls', 'retention_runs', 'deletion_requests'];
 
 describe('migrations', () => {
   let c: Client;
@@ -51,7 +51,7 @@ describe('migrations', () => {
   it('every tenant-owned table has a tenant_id column', async () => {
     const r = await c.query(`SELECT table_name FROM information_schema.columns WHERE table_schema='public' AND column_name='tenant_id'`);
     const withTenant = new Set(r.rows.map((x) => x.table_name));
-    for (const t of REQUIRED.filter((t) => !['tenants', 'users'].includes(t))) expect(withTenant.has(t)).toBe(true);
+    for (const t of REQUIRED.filter((t) => !['tenants', 'users', 'password_reset_tokens', 'audit_chain_heads'].includes(t))) expect(withTenant.has(t)).toBe(true);
   });
 });
 

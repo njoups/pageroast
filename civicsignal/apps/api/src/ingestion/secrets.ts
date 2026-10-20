@@ -29,7 +29,7 @@ export class CredentialCipher {
   decrypt(blob: string, aad: string): string {
     const [v, iv, tag, ct] = blob.split('.');
     if (v !== 'v1' || !iv || !tag || !ct) throw new Error('Unsupported credential format');
-    const d = createDecipheriv('aes-256-gcm', this.key, Buffer.from(iv, 'base64'));
+    const d = createDecipheriv('aes-256-gcm', this.key, Buffer.from(iv, 'base64'), { authTagLength: 16 });
     d.setAAD(Buffer.from(aad));
     d.setAuthTag(Buffer.from(tag, 'base64'));
     return Buffer.concat([d.update(Buffer.from(ct, 'base64')), d.final()]).toString('utf8');

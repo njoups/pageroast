@@ -11,7 +11,9 @@ for (const [net, prefix] of [
   ['198.51.100.0', 24], ['203.0.113.0', 24], ['224.0.0.0', 4], ['240.0.0.0', 4],
 ] as const) blocked.addSubnet(net, prefix, 'ipv4');
 for (const [net, prefix] of [
-  ['::', 128], ['::1', 128], ['100::', 64], ['2001:db8::', 32], ['fc00::', 7], ['fe80::', 10], ['ff00::', 8],
+  // ::/96 covers the unspecified address, loopback and deprecated IPv4-compatible addresses (::a.b.c.d);
+  // 2001::/32 Teredo, 64:ff9b:1::/48 local-use NAT64, fec0::/10 deprecated site-local.
+  ['::', 96], ['::1', 128], ['100::', 64], ['2001::', 32], ['2001:db8::', 32], ['64:ff9b:1::', 48], ['fc00::', 7], ['fe80::', 10], ['fec0::', 10], ['ff00::', 8],
 ] as const) blocked.addSubnet(net, prefix, 'ipv6');
 
 /** IPv6 forms that embed an IPv4 address the packet may actually reach. */

@@ -1,6 +1,7 @@
 import { ArgumentsHost, Catch, ExceptionFilter, HttpException, Logger } from '@nestjs/common';
 import type { Response } from 'express';
 import { AppError } from './errors';
+import { redactString } from './redact';
 import type { AppRequest } from './request';
 
 @Catch()
@@ -22,6 +23,13 @@ export class ErrorEnvelopeFilter implements ExceptionFilter {
       status = exception.getStatus();
       code = status === 404 ? 'not_found' : status === 429 ? 'rate_limited' : 'http_error';
       message = exception.message;
+    } else if (typeof (exception as { status?: unknown }).status === 'number' && typeof (exception as { type?: unknown }).type === 'string'
+      && (exception as { status: number }).status >= 400 && (exception as { status: number }).status < 500) {
+      // body-parser errors (oversized or malformed bodies): client errors, never 500s.
+      const e = exception as { status: number; type: string };
+      status = e.status;
+      code = e.type === 'entity.too.large' ? 'payload_too_large' : e.type === 'entity.parse.failed' ? 'invalid_json' : 'bad_request';
+      message = status === 413 ? 'Request body too large' : 'Malformed request body';
     } else {
       const pg = exception as { code?: string };
       if (pg?.code === '23505') { status = 409; code = 'conflict'; message = 'A record with these values already exists'; }
@@ -29,7 +37,7 @@ export class ErrorEnvelopeFilter implements ExceptionFilter {
       else if (pg?.code === '22007' || pg?.code === '22008') { status = 400; code = 'validation_failed'; message = 'Invalid date or time value'; }
       else if (pg?.code === '23514') { status = 400; code = 'validation_failed'; message = 'Value violates a data constraint'; }
       else if (pg?.code === '22P02') { status = 400; code = 'invalid_identifier'; message = 'Malformed identifier'; }
-      else this.log.error(`requestId=${req.requestId} ${(exception as Error)?.stack ?? String(exception)}`);
+      else this.log.error(`requestId=${req.requestId} ${redactString((exception as Error)?.stack ?? String(exception))}`);
     }
     res.status(status).json({ error: { code, message, details, requestId: req.requestId } });
   }

@@ -132,3 +132,9 @@ export const canIngest = {
   manageSources: (r: Role) => r === 'owner' || r === 'admin' || r === 'project_manager',
   readMentions: (r: Role) => r !== 'report_viewer',
 };
+
+/** External links from collected data: only http(s) URLs become links (defence in depth; ingestion already enforces this). */
+export function safeHref(u: string | null | undefined): string | undefined {
+  if (!u) return undefined;
+  try { const p = new URL(u); return p.protocol === 'http:' || p.protocol === 'https:' ? p.toString() : undefined; } catch { return undefined; }
+}

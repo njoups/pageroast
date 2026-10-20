@@ -7,6 +7,6 @@ async function bootstrap() {
   app.enableShutdownHooks();
   const config = app.get<AppConfig>(CONFIG);
   await app.listen(config.port);
-  new Logger('Bootstrap').log(`API listening on :${config.port} (docs at /api/docs)`);
+  new Logger('Bootstrap').log(`API listening on :${config.port} (env ${config.appEnv}; API docs ${config.apiDocsEnabled ? 'at /api/docs' : 'disabled'})`);
 }
 void bootstrap();

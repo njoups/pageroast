@@ -15,10 +15,12 @@ services:
 
   redis:
     image: redis:7
-    command: ["redis-server", "--appendonly", "yes"]
+    environment:
+      REDIS_PASSWORD: ${REDIS_PASSWORD:?set in .env}
+    command: ["redis-server", "--appendonly", "yes", "--requirepass", "${REDIS_PASSWORD:?set in .env}"]
     volumes: [redisdata:/data]
     healthcheck:
-      test: ["CMD", "redis-cli", "ping"]
+      test: ["CMD-SHELL", "redis-cli -a \"$$REDIS_PASSWORD\" --no-auth-warning ping"]
       interval: 5s
       retries: 20
 
@@ -36,15 +38,17 @@ services:
       NODE_ENV: production
       PORT: 4000
       DATABASE_URL: postgres://civicsignal_app:${APP_DB_PASSWORD}@db:5432/civicsignal
-      MIGRATION_DATABASE_URL: postgres://civicsignal_owner:${POSTGRES_PASSWORD}@db:5432/civicsignal
+      # The owner (migration) credentials are given only to the migrate job, never to long-running services.
+      APP_ENV: ${APP_ENV:-local}
       APP_ORIGINS: ${APP_ORIGINS:-http://localhost:3000}
       # Browsers accept Secure cookies on http://localhost; use HTTPS everywhere else.
       COOKIE_SECURE: ${COOKIE_SECURE:-true}
       SESSION_TTL_SECONDS: ${SESSION_TTL_SECONDS:-43200}
       # Only valid because the edge proxy below overwrites X-Forwarded-For. Never expose web or api directly.
       TRUST_PROXY: "true"
-      REDIS_URL: redis://redis:6379/0
+      REDIS_URL: redis://:${REDIS_PASSWORD}@redis:6379/0
       CREDENTIALS_KEY: ${CREDENTIALS_KEY:-}
+      METRICS_TOKEN: ${METRICS_TOKEN:-}
       # AI analysis (docs/AI_PROVIDERS.md). Without a key the rule-based baseline is used and labelled as such.
       AI_PROVIDER: ${AI_PROVIDER:-}
       ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
@@ -61,11 +65,16 @@ services:
   worker:
     build: { context: ., dockerfile: apps/api/Dockerfile }
     command: ["node", "apps/api/dist/worker.js"]
+    healthcheck:
+      test: ["CMD", "node", "apps/api/dist/worker-health.js"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
     environment:
       NODE_ENV: production
+      APP_ENV: ${APP_ENV:-local}
       DATABASE_URL: postgres://civicsignal_app:${APP_DB_PASSWORD}@db:5432/civicsignal
-      MIGRATION_DATABASE_URL: postgres://civicsignal_owner:${POSTGRES_PASSWORD}@db:5432/civicsignal
-      REDIS_URL: redis://redis:6379/0
+      REDIS_URL: redis://:${REDIS_PASSWORD}@redis:6379/0
       CREDENTIALS_KEY: ${CREDENTIALS_KEY:-}
       INGESTION_USER_AGENT: ${INGESTION_USER_AGENT:-CivicSignalBot/0.2 (+contact your operator)}
       # The worker runs analysis and sends notifications, so it needs the same AI and channel settings as the API.

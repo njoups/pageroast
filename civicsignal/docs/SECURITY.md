@@ -78,6 +78,7 @@ Generated from `apps/api/src/authz/permissions.ts`; a test fails if this table d
 | `data:delete` | ✔ |  |  |  |  |
 | `analysis:reprocess` | ✔ | ✔ | ✔ |  |  |
 | `ai:settings` | ✔ | ✔ |  |  |  |
+| `integrations:manage` | ✔ | ✔ |  |  |  |
 
 Platform administrators hold **no** tenant permissions. Project-scoped reads for project_manager, analyst and report_viewer are further limited to projects they are assigned to.
 <!-- MATRIX:END -->

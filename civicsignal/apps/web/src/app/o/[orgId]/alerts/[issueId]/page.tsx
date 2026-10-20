@@ -8,7 +8,7 @@ import { useOrg } from '@/components/org-context';
 import { Alert, Badge, Loading, PageHeader } from '@/components/ui';
 import { ENTITY_TYPE_LABEL, topicLabel, type Sentiment } from '@/lib/ai';
 import { ago, canAlerts, SCOPE_LABEL, SIGNAL_LABEL, STATUS_LABEL, type IssueStatus, type Severity } from '@/lib/alerts';
-import { api, errorMessage, fmtDate, type Member } from '@/lib/api';
+import { api, errorMessage, fmtDate, type Member, safeHref } from '@/lib/api';
 
 interface Factor { factor: string; value: string | number | null; points: number; rule: string }
 interface Detail {
@@ -151,7 +151,7 @@ export default function IssueDetail() {
             <p className="text-xs text-slate-600">{d.totals.publishers} publishers · {d.totals.independent_publishers} independent · {d.totals.syndicated} syndicated copies (not independent confirmation){d.totals.records > d.evidence.length ? ` · showing latest ${d.evidence.length}` : ''}</p>
             <ol className="mt-3 space-y-2 text-sm">{d.evidence.map((e, n) => (
               <li key={e.id} id={`ev-${e.id}`}><span className="mr-1 text-xs text-slate-500">[{n + 1}]</span>
-                <a href={e.url} target="_blank" rel="noopener noreferrer nofollow" className="text-brand-700 hover:underline">{e.title}</a>{' '}
+                <a href={safeHref(e.url)} target="_blank" rel="noopener noreferrer nofollow" className="text-brand-700 hover:underline">{e.title}</a>{' '}
                 {e.is_syndicated && <Badge tone="amber">Syndicated copy</Badge>} {e.sentiment && <SentimentBadge label={e.sentiment} uncertain={!!e.sentiment_uncertain} />}
                 <span className="block text-xs text-slate-600">{e.publisher} · {e.published_at ? fmtDate(e.published_at) : `discovered ${fmtDate(e.discovered_at)}`} · via {e.source_name} · <Link className="text-brand-700 hover:underline" href={`/o/${org.id}/mentions/${e.id}`}>analysis</Link></span>
               </li>

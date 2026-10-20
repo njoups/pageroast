@@ -20,9 +20,11 @@ import { IssueSummaryService } from './alerts/issue-summary.service';
 import { NotificationService } from './alerts/notifications.service';
 import { CLOCK, type Clock } from './alerts/clock';
 import { ReportGenerator } from './reports/generator.service';
+import { AuditService } from './audit/audit.service';
+import { RetentionService, retentionTick } from './governance/retention.service';
 import { analyticsRefreshTick, createReportsWorker, ReportsCoreModule, ReportsEnqueuer, reportsSchedulerTick } from './reports/reports-queue';
 
-@Module({ imports: [DatabaseModule, IngestionCoreModule, AlertsCoreModule, ReportsCoreModule] })
+@Module({ imports: [DatabaseModule, IngestionCoreModule, AlertsCoreModule, ReportsCoreModule], providers: [AuditService, RetentionService] })
 class WorkerModule {}
 
 /**
@@ -86,6 +88,13 @@ async function main() {
       if (r.created || r.abandoned || r.expired) logEvent('info', 'reports.scheduler', r);
     } catch (e) { logEvent('error', 'reports.scheduler_error', { message: (e as Error).message }); } finally { reportsTicking = false; }
   };
+  let retentionTicking = false;
+  const retentionRun = async () => {
+    if (retentionTicking) return; retentionTicking = true;
+    try { const r = await retentionTick(db, ctx.get(RetentionService), clock); if (r.ran) logEvent('info', 'retention.scheduler', r); }
+    catch (e) { logEvent('error', 'retention.scheduler_error', { message: (e as Error).message }); } finally { retentionTicking = false; }
+  };
+  const retentionScheduler = runScheduler ? setInterval(() => void retentionRun(), 15 * 60_000) : null;
   const analyticsScheduler = runScheduler ? setInterval(() => void analyticsTick(), config.analytics.refreshIntervalMs) : null;
   const reportsScheduler = runScheduler ? setInterval(() => void reportsTick(), 60_000) : null;
   if (runScheduler) { void analyticsTick(); void reportsTick(); }
@@ -99,6 +108,7 @@ async function main() {
     if (alertsScheduler) clearInterval(alertsScheduler);
     if (analyticsScheduler) clearInterval(analyticsScheduler);
     if (reportsScheduler) clearInterval(reportsScheduler);
+    if (retentionScheduler) clearInterval(retentionScheduler);
     clearInterval(heartbeat);
     await consumer?.worker.close();   // waits for in-flight jobs
     await analysisWorker?.close();

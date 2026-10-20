@@ -142,6 +142,7 @@ export class RulesService {
       if (p.status === 'archived') throw conflict('project_archived', 'Unarchive the project first');
       const cfg = await this.validate(c, dto.ruleType, dto.projectId, dto.config ?? {});
       const owner = dto.ownerUserId ?? auth.userId;
+      if (dto.ownerUserId) await this.assertOwner(c, dto.projectId, dto.ownerUserId);
       const r = (await c.query<{ id: string }>(`INSERT INTO alert_rules (tenant_id, project_id, name, rule_type, is_active, owner_user_id, created_by, created_at, updated_at)
         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$8) RETURNING id`, [t.orgId, dto.projectId, dto.name, dto.ruleType, dto.isActive ?? true, owner, auth.userId, this.clock.now()])).rows[0]!;
       await c.query(`INSERT INTO alert_rule_versions (tenant_id, rule_id, version, config, config_sha256, created_by, created_at) VALUES ($1,$2,1,$3,$4,$5,$6)`,
@@ -149,6 +150,15 @@ export class RulesService {
       await this.audit.record(c, { tenantId: t.orgId, actorUserId: auth.userId, action: 'alert_rule.created', targetType: 'alert_rule', targetId: r.id, metadata: { name: dto.name, ruleType: dto.ruleType, projectId: dto.projectId }, meta });
       return { id: r.id, version: 1, config: cfg };
     });
+  }
+
+  /** A rule owner must be a member who can read alerts and can see the rule's project. */
+  private async assertOwner(c: import('pg').PoolClient, projectId: string, userId: string) {
+    const m = (await c.query<{ role: Role; assigned: boolean }>(`SELECT role, EXISTS (SELECT 1 FROM project_members pm WHERE pm.project_id = $2 AND pm.user_id = $1) AS assigned
+      FROM memberships WHERE user_id = $1`, [userId, projectId])).rows[0];
+    if (!m || !hasPermission(m.role, 'alerts:read') || !(seesAllProjects(m.role) || m.assigned)) {
+      throw badRequest('validation_failed', 'Owner must be a member who can read alerts in this project');
+    }
   }
 
   /** Name/owner/active changes update the rule; any config change creates a new immutable version. */
@@ -166,10 +176,7 @@ export class RulesService {
             [t.orgId, id, version, JSON.stringify(cfg), configSha(cfg), auth.userId, this.clock.now()]);
         }
       }
-      if (dto.ownerUserId) {
-        const m = (await c.query<{ role: Role }>('SELECT role FROM memberships WHERE user_id = $1', [dto.ownerUserId])).rows[0];
-        if (!m || !hasPermission(m.role, 'alerts:read')) throw badRequest('validation_failed', 'Owner must be a member who can read alerts');
-      }
+      if (dto.ownerUserId) await this.assertOwner(c, r.project_id, dto.ownerUserId);
       await c.query(`UPDATE alert_rules SET name = coalesce($2, name), is_active = coalesce($3, is_active), owner_user_id = CASE WHEN $4 THEN $5::uuid ELSE owner_user_id END,
         current_version = $6, updated_at = $7 WHERE id = $1`, [id, dto.name ?? null, dto.isActive ?? null, dto.ownerUserId !== undefined, dto.ownerUserId ?? null, version, this.clock.now()]);
       await this.audit.record(c, { tenantId: t.orgId, actorUserId: auth.userId, action: 'alert_rule.updated', targetType: 'alert_rule', targetId: id,
@@ -238,6 +245,12 @@ export class RulesService {
   private checkUrl(url: string) {
     try { return assertWebhookUrl(url, { allowHttp: this.config.alerts.webhookAllowHttp, allowPrivateHosts: this.config.ingestion.allowPrivateHosts }); }
     catch (e) { throw badRequest('validation_failed', `Invalid webhook URL: ${(e as Error).message}`, [{ field: 'url', problems: [(e as Error).message] }]); }
+  }
+
+  /** Names only, for choosing notification targets in a rule; URLs, secrets and delivery logs need integrations:manage. */
+  webhookOptions(auth: AuthContext, t: TenantContext) {
+    return this.db.withTenant(t.orgId, auth.userId, async (c) => (await c.query(
+      `SELECT id, name, min_severity, is_active, verified_at FROM webhook_endpoints ORDER BY name`)).rows);
   }
 
   webhooks(auth: AuthContext, t: TenantContext) {
@@ -416,21 +429,23 @@ export class AlertRulesController {
   @Post('alert-rules/:id/test') @HttpCode(200) @RequirePermission('alerts:manage')
   test(@Auth() a: AuthContext, @Tenant() t: TenantContext, @Param('id', ParseUUIDPipe) id: string, @Meta() m: RequestMeta) { return this.svc.test(a, t, id, m); }
 
-  @Get('webhooks') @RequirePermission('alerts:manage')
+  @Get('webhooks/options') @RequirePermission('alerts:manage')
+  webhookOptions(@Auth() a: AuthContext, @Tenant() t: TenantContext) { return this.svc.webhookOptions(a, t); }
+  @Get('webhooks') @RequirePermission('integrations:manage')
   webhooks(@Auth() a: AuthContext, @Tenant() t: TenantContext) { return this.svc.webhooks(a, t); }
-  @Post('webhooks') @RequirePermission('alerts:manage')
+  @Post('webhooks') @RequirePermission('integrations:manage')
   createWebhook(@Auth() a: AuthContext, @Tenant() t: TenantContext, @Body() dto: WebhookDto, @Meta() m: RequestMeta) { return this.svc.createWebhook(a, t, dto, m); }
-  @Patch('webhooks/:id') @RequirePermission('alerts:manage')
+  @Patch('webhooks/:id') @RequirePermission('integrations:manage')
   updateWebhook(@Auth() a: AuthContext, @Tenant() t: TenantContext, @Param('id', ParseUUIDPipe) id: string, @Body() dto: WebhookUpdateDto, @Meta() m: RequestMeta) { return this.svc.updateWebhook(a, t, id, dto, m); }
-  @Delete('webhooks/:id') @HttpCode(204) @RequirePermission('alerts:manage')
+  @Delete('webhooks/:id') @HttpCode(204) @RequirePermission('integrations:manage')
   deleteWebhook(@Auth() a: AuthContext, @Tenant() t: TenantContext, @Param('id', ParseUUIDPipe) id: string, @Meta() m: RequestMeta) { return this.svc.deleteWebhook(a, t, id, m); }
-  @Post('webhooks/:id/verify') @HttpCode(200) @RequirePermission('alerts:manage')
+  @Post('webhooks/:id/verify') @HttpCode(200) @RequirePermission('integrations:manage')
   verify(@Auth() a: AuthContext, @Tenant() t: TenantContext, @Param('id', ParseUUIDPipe) id: string, @Meta() m: RequestMeta) { return this.svc.verifyWebhook(a, t, id, m); }
-  @Post('webhooks/:id/rotate-secret') @HttpCode(200) @RequirePermission('alerts:manage')
+  @Post('webhooks/:id/rotate-secret') @HttpCode(200) @RequirePermission('integrations:manage')
   rotate(@Auth() a: AuthContext, @Tenant() t: TenantContext, @Param('id', ParseUUIDPipe) id: string, @Body() dto: RotateDto, @Meta() m: RequestMeta) { return this.svc.rotateSecret(a, t, id, dto, m); }
-  @Get('webhooks/:id/deliveries') @RequirePermission('alerts:manage')
+  @Get('webhooks/:id/deliveries') @RequirePermission('integrations:manage')
   webhookDeliveries(@Auth() a: AuthContext, @Tenant() t: TenantContext, @Param('id', ParseUUIDPipe) id: string) { return this.svc.webhookDeliveries(a, t, id); }
-  @Post('webhook-deliveries/:id/retry') @HttpCode(202) @RequirePermission('alerts:manage')
+  @Post('webhook-deliveries/:id/retry') @HttpCode(202) @RequirePermission('integrations:manage')
   retryWebhook(@Auth() a: AuthContext, @Tenant() t: TenantContext, @Param('id', ParseUUIDPipe) id: string, @Meta() m: RequestMeta) { return this.svc.retryDelivery(a, t, id, 'webhook', m); }
 
   @Get('notifications') @RequirePermission('org:read')
@@ -441,9 +456,9 @@ export class AlertRulesController {
   prefs(@Auth() a: AuthContext, @Tenant() t: TenantContext) { return this.svc.preferences(a, t); }
   @Put('notifications/preferences') @RequirePermission('org:read')
   setPrefs(@Auth() a: AuthContext, @Tenant() t: TenantContext, @Body() dto: PreferencesDto, @Meta() m: RequestMeta) { return this.svc.setPreferences(a, t, dto, m); }
-  @Get('notifications/deliveries') @RequirePermission('alerts:manage')
+  @Get('notifications/deliveries') @RequirePermission('integrations:manage')
   deliveries(@Auth() a: AuthContext, @Tenant() t: TenantContext) { return this.svc.deliveries(a, t); }
-  @Post('notifications/deliveries/:id/retry') @HttpCode(202) @RequirePermission('alerts:manage')
+  @Post('notifications/deliveries/:id/retry') @HttpCode(202) @RequirePermission('integrations:manage')
   retry(@Auth() a: AuthContext, @Tenant() t: TenantContext, @Param('id', ParseUUIDPipe) id: string, @Meta() m: RequestMeta) { return this.svc.retryDelivery(a, t, id, 'notification', m); }
   @Patch('notifications/:id') @RequirePermission('org:read')
   read(@Auth() a: AuthContext, @Tenant() t: TenantContext, @Param('id', ParseUUIDPipe) id: string, @Body() dto: ReadDto) { return this.svc.markRead(a, t, id, dto); }

@@ -60,7 +60,8 @@ export function AuthForm({ mode }: { mode: 'login' | 'register' }) {
           </p>
           {!register && (
             <p className="text-center text-xs text-slate-500">
-              Password reset and MFA require the managed identity provider, which is not yet configured for this deployment.
+              <Link className="text-brand-600 underline" href="/forgot-password">Forgot your password?</Link> MFA requires a managed identity provider,
+              which is not configured for this deployment.
             </p>
           )}
         </form>

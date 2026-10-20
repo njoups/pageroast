@@ -55,9 +55,37 @@ function text(v: unknown): string | null {
 const ENTITIES: Record<string, string> = { amp: '&', lt: '<', gt: '>', quot: '"', apos: "'", nbsp: ' ' };
 
 /** Feed text is untrusted: strip markup, decode entities, collapse whitespace. Output is plain text only. */
+/**
+ * Removes tags, and script/style elements with their content, in one linear pass (indexOf scans never revisit text).
+ * Regex equivalents are quadratic on hostile input such as thousands of unclosed tags. An unclosed tag or element drops
+ * the remainder of the text.
+ */
+export function stripTags(v: string): string {
+  let out = ''; let i = 0; const lower = v.toLowerCase();
+  while (i < v.length) {
+    const lt = v.indexOf('<', i);
+    if (lt < 0) { out += v.slice(i); break; }
+    out += v.slice(i, lt) + ' ';
+    const m = /^<(script|style)\b/.exec(lower.slice(lt, lt + 8));
+    if (m) {
+      const close = lower.indexOf(`</${m[1]}`, lt + 1);
+      if (close < 0) break;
+      const end = v.indexOf('>', close);
+      if (end < 0) break;
+      i = end + 1; continue;
+    }
+    const gt = v.indexOf('>', lt + 1);
+    if (gt < 0) break;
+    i = gt + 1;
+  }
+  return out;
+}
+
+/** Untrusted markup is truncated before regex stripping so pathological input (e.g. many unclosed tags) stays linear-bounded. */
+export const MAX_MARKUP_CHARS = 200_000;
 export function plainText(v: string | null, max?: number): string | null {
   if (!v) return null;
-  let s = v.replace(/<(script|style)[\s\S]*?<\/\1>/gi, ' ').replace(/<[^>]*>/g, ' ');
+  let s = stripTags(v.length > MAX_MARKUP_CHARS ? v.slice(0, MAX_MARKUP_CHARS) : v);
   s = s.replace(/&(#x[0-9a-f]+|#\d+|[a-z]+);/gi, (m, e: string) => {
     if (e[0] === '#') {
       const cp = e[1] === 'x' || e[1] === 'X' ? parseInt(e.slice(2), 16) : parseInt(e.slice(1), 10);

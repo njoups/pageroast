@@ -2,7 +2,7 @@
 import Link from 'next/link';
 import { useEffect, useState } from 'react';
 import { Alert, Badge, Empty, Loading, PageHeader, Stat } from '@/components/ui';
-import { api, can, canIngest, errorMessage, fmtDate, HEALTH_LABEL, HEALTH_TONE, relTime, type AuditEvent, type Member, type Mention, type Project, type Source } from '@/lib/api';
+import { api, can, canIngest, errorMessage, fmtDate, HEALTH_LABEL, HEALTH_TONE, relTime, type AuditEvent, type Member, type Mention, type Project, type Source, safeHref } from '@/lib/api';
 import { useOrg } from '@/components/org-context';
 
 interface Ingest { sources: Source[]; last24h: number; recent: Mention[]; worker: { online: boolean } | null; queueConfigured: boolean }
@@ -25,7 +25,7 @@ function IngestionPanel({ orgId, ingest }: { orgId: string; ingest: Ingest | nul
             <ul className="mt-3 divide-y divide-slate-100">
               {recent.map((m) => (
                 <li key={m.id} className="py-2 text-sm">
-                  <a href={m.url} target="_blank" rel="noopener noreferrer nofollow" className="font-medium text-slate-800 hover:underline">{m.title}</a>
+                  <a href={safeHref(m.url)} target="_blank" rel="noopener noreferrer nofollow" className="font-medium text-slate-800 hover:underline">{m.title}</a>
                   <p className="text-xs text-slate-500">{m.publisher ?? m.publisher_domain} · discovered {relTime(m.discovered_at)}{m.published_at ? ` · published ${fmtDate(m.published_at)}` : ''}{m.matches.length ? ` · ${m.matches.map((x) => x.projectName).join(', ')}` : ''}</p>
                 </li>
               ))}

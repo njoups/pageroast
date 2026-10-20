@@ -6,7 +6,7 @@ import { MethodBadge, Provenance, SentimentBadge } from '@/components/ai';
 import { useOrg } from '@/components/org-context';
 import { Alert, Badge, Loading, PageHeader } from '@/components/ui';
 import { canAi, CONTENT_STATUS_LABEL, ENTITY_TYPE_LABEL, pct, STATUS_LABEL, type MentionAnalysis } from '@/lib/ai';
-import { api, errorMessage, fmtDate } from '@/lib/api';
+import { api, errorMessage, fmtDate, safeHref } from '@/lib/api';
 
 const ACTIVE = ['queued', 'running', 'retrying'];
 
@@ -53,7 +53,7 @@ export default function MentionDetail() {
         <div className="space-y-6 lg:col-span-2">
           <section className="card" aria-labelledby="src-h">
             <div className="mb-2 flex items-center justify-between gap-2"><h2 id="src-h" className="font-semibold">Original record</h2><Provenance kind="source" /></div>
-            <p className="text-sm"><a href={m.url} target="_blank" rel="noopener noreferrer nofollow" className="text-brand-700 hover:underline">Open at publisher ↗</a></p>
+            <p className="text-sm"><a href={safeHref(m.url)} target="_blank" rel="noopener noreferrer nofollow" className="text-brand-700 hover:underline">Open at publisher ↗</a></p>
             {m.excerpt ? <blockquote className="mt-3 border-l-4 border-slate-200 pl-3 text-sm text-slate-700">{m.excerpt}</blockquote>
               : <p className="mt-3 text-sm text-slate-500">The licence for this source permits the headline only; analysis used the headline alone.</p>}
             <dl className="mt-3 grid grid-cols-2 gap-2 text-xs text-slate-600">

@@ -1,3 +1,4 @@
+import { withVisibleLabels } from '../analysis/cluster-visibility';
 import { Body, Controller, Get, HttpCode, Inject, Injectable, Param, ParseUUIDPipe, Post, Query, UseGuards } from '@nestjs/common';
 import { ApiTags } from '@nestjs/swagger';
 import { Transform, Type } from 'class-transformer';
@@ -83,7 +84,7 @@ export class IssuesService {
            (SELECT count(*)::int FROM alert_evidence e WHERE e.issue_id = i.id) AS evidence_count,
            (SELECT count(DISTINCT m.publisher_domain)::int FROM alert_evidence e JOIN mentions m ON m.id = e.mention_id WHERE e.issue_id = i.id) AS publisher_count,
            (SELECT count(DISTINCT m.publisher_domain)::int FROM alert_evidence e JOIN mentions m ON m.id = e.mention_id WHERE e.issue_id = i.id AND NOT e.is_syndicated) AS independent_publishers,
-           (SELECT count(*)::int FROM detected_issues g WHERE g.group_key = i.group_key AND g.id <> i.id) AS related_count
+           (SELECT count(*)::int FROM detected_issues g WHERE g.group_key = i.group_key AND g.id <> i.id AND g.project_id = i.project_id) AS related_count
          FROM detected_issues i JOIN projects p ON p.id = i.project_id JOIN alert_rules r ON r.id = i.rule_id LEFT JOIN users u ON u.id = i.assigned_to
          WHERE ${sql} ORDER BY (i.status IN ('resolved','closed')), ${SYS_SEVERITY_ORDER} DESC, i.last_detected_at DESC
          LIMIT ${add(f.limit ?? 50)} OFFSET ${add(f.offset ?? 0)}`, params)).rows;
@@ -126,6 +127,7 @@ export class IssuesService {
         WHERE e.issue_id = $1 GROUP BY en.id ORDER BY 4 DESC LIMIT 15`, [id])).rows;
       const clusters = (await c.query(`SELECT sc.id, sc.label, sc.member_count, sc.independent_count, sc.publisher_count, sc.status, count(*)::int AS in_issue
         FROM alert_evidence e JOIN story_clusters sc ON sc.id = e.cluster_id WHERE e.issue_id = $1 GROUP BY sc.id ORDER BY 7 DESC LIMIT 10`, [id])).rows;
+      const visibleClusters = await withVisibleLabels(c, auth, t, clusters);
       const events = (await c.query(`SELECT ev.id, ev.event, ev.from_status, ev.to_status, ev.details, ev.at, u.display_name AS actor_name
         FROM alert_events ev LEFT JOIN users u ON u.id = ev.actor_user_id WHERE ev.issue_id = $1 ORDER BY ev.at, ev.id`, [id])).rows;
       const notes = (await c.query(`SELECT n.id, n.body, n.created_at, u.display_name AS author_name, n.author_user_id FROM alert_notes n LEFT JOIN users u ON u.id = n.author_user_id
@@ -138,7 +140,7 @@ export class IssuesService {
       const deliveries = (await c.query(`SELECT channel, status, count(*)::int AS n FROM notification_deliveries WHERE issue_id = $1 GROUP BY 1, 2`, [id])).rows;
       const assignee = i.assigned_to ? (await c.query('SELECT id, display_name FROM users WHERE id = $1', [i.assigned_to])).rows[0] : null;
       return {
-        issue: { ...i, assignee }, rule, evidence, totals, sentiment, topics, entities, clusters, events, notes, assignments, related, deliveries,
+        issue: { ...i, assignee }, rule, evidence, totals, sentiment, topics, entities, clusters: visibleClusters, events, notes, assignments, related, deliveries,
         disclaimer: 'Detected automatically from collected coverage. Severity follows documented rules; summaries and classifications are automated estimates, not verified facts.',
       };
     });
@@ -239,6 +241,8 @@ export class IssuesService {
       const pa: unknown[] = []; const vis = seesAllProjects(t.role) ? 'true' : (pa.push(auth.userId), `EXISTS (SELECT 1 FROM project_members pm WHERE pm.project_id = a.project_id AND pm.user_id = $${pa.length})`);
       const proj = f.projectId ? (pa.push(f.projectId), `AND a.project_id = $${pa.length}`) : '';
       const from = f.from ? new Date(f.from) : new Date(now.getTime() - 14 * 86_400_000); const to = f.to ? new Date(f.to) : now;
+      if (to.getTime() - from.getTime() > 366 * 86_400_000) throw badRequest('period_too_long', 'The dashboard period may span at most 366 days');
+      if (to <= from) throw badRequest('validation_failed', '`from` must be before `to`');
       const fi = pa.length + 1; const ti = pa.length + 2;
       // Several projects can match one record; without a project filter the series counts project-matched records.
       const series = (await c.query(`SELECT to_char(date_trunc('day', a.hour), 'YYYY-MM-DD') AS day, sum(a.mentions)::int AS mentions, max(a.publishers)::int AS publishers_max,
@@ -254,7 +258,7 @@ export class IssuesService {
         prior AS (SELECT a.topic_key, sum(a.mentions)::numeric / 11 AS per3 FROM topic_activity_daily a
           WHERE ${vis} ${proj} AND a.day > ($${ei}::timestamptz - interval '14 days')::date AND a.day <= ($${ei}::timestamptz - interval '3 days')::date GROUP BY 1)
         SELECT r.topic_key, r.n, r.pubs, round(coalesce(p.per3, 0) * 3, 1) AS prior_per_3_days, max(pt.label) AS custom_label
-        FROM recent r LEFT JOIN prior p ON p.topic_key = r.topic_key LEFT JOIN project_topics pt ON pt.key = r.topic_key
+        FROM recent r LEFT JOIN prior p ON p.topic_key = r.topic_key LEFT JOIN project_topics pt ON pt.key = r.topic_key AND pt.project_id IN (SELECT a2.project_id FROM topic_activity_daily a2 WHERE a2.topic_key = r.topic_key AND ${vis.replace(/\ba\./g, 'a2.')})
         WHERE r.topic_key NOT IN ('unknown','other') GROUP BY r.topic_key, r.n, r.pubs, p.per3 ORDER BY (r.n - coalesce(p.per3, 0) * 3) DESC LIMIT 8`, [...pa, to])).rows;
       const active = (await c.query(`SELECT i.id, i.title, i.severity, i.status, i.signal, i.scope, i.first_detected_at, i.last_detected_at, i.acknowledged_at, i.assigned_to,
           (SELECT count(DISTINCT m.publisher_domain)::int FROM alert_evidence e JOIN mentions m ON m.id = e.mention_id WHERE e.issue_id = i.id AND NOT e.is_syndicated) AS independent_publishers,
@@ -263,9 +267,9 @@ export class IssuesService {
         ORDER BY ${SYS_SEVERITY_ORDER} DESC, i.first_detected_at LIMIT 10`, [...params, OPEN_STATUSES])).rows;
       const timeline = (await c.query(`SELECT ev.event, ev.at, ev.from_status, ev.to_status, i.id AS issue_id, i.title, i.severity FROM alert_events ev JOIN detected_issues i ON i.id = ev.issue_id
         WHERE ${sql} AND ev.event IN ('detected','severity_changed','status_changed','reopened','escalated') ORDER BY ev.at DESC LIMIT 25`, params)).rows;
-      const clusters = (await c.query(`SELECT sc.id, sc.label, sc.member_count, sc.independent_count, sc.publisher_count, count(DISTINCT i.id)::int AS issues
+      const clusters = await withVisibleLabels(c, auth, t, (await c.query(`SELECT sc.id, sc.label, sc.member_count, sc.independent_count, sc.publisher_count, count(DISTINCT i.id)::int AS issues
         FROM detected_issues i JOIN alert_evidence e ON e.issue_id = i.id JOIN story_clusters sc ON sc.id = e.cluster_id
-        WHERE ${sql} AND i.status = ANY($${params.length + 1}::text[]) GROUP BY sc.id ORDER BY sc.independent_count DESC, sc.member_count DESC LIMIT 8`, [...params, OPEN_STATUSES])).rows;
+        WHERE ${sql} AND i.status = ANY($${params.length + 1}::text[]) GROUP BY sc.id ORDER BY sc.independent_count DESC, sc.member_count DESC LIMIT 8`, [...params, OPEN_STATUSES])).rows);
       const freshness = (await c.query(`SELECT s.id, s.name, s.enabled, s.refresh_interval_seconds, s.last_success_at, s.last_attempt_at, s.consecutive_failures FROM sources s
         ORDER BY s.enabled DESC, s.last_success_at DESC NULLS LAST LIMIT 20`)).rows;
       const lastEvaluation = (await c.query(`SELECT finished_at, status, rules_evaluated, suppressed FROM alert_evaluations ORDER BY started_at DESC LIMIT 1`)).rows[0] ?? null;

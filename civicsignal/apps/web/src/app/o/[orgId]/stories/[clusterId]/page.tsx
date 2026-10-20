@@ -6,7 +6,7 @@ import { MethodBadge, Provenance, SentimentBadge } from '@/components/ai';
 import { useOrg } from '@/components/org-context';
 import { Alert, Badge, Loading, PageHeader } from '@/components/ui';
 import { type Sentiment, type Summary } from '@/lib/ai';
-import { api, errorMessage, fmtDate } from '@/lib/api';
+import { api, errorMessage, fmtDate, safeHref } from '@/lib/api';
 
 interface Member { id: string; title: string; url: string; publisher: string | null; publisher_domain: string; published_at: string | null; discovered_at: string;
   score: string | null; reasons: { headline?: number; sharedTokens?: string[]; sharedEntities?: number; topic?: boolean; hoursApart?: number } | null; is_syndicated: boolean; sentiment: Sentiment | null }
@@ -55,7 +55,7 @@ export default function StoryDetail() {
             <ol className="space-y-3 text-sm">{d.members.map((m, i) => (
               <li key={m.id} id={`r${i + 1}`}>
                 <span className="mr-1 text-xs text-slate-500">[{i + 1}]</span>
-                <a href={m.url} target="_blank" rel="noopener noreferrer nofollow" className="text-brand-700 hover:underline">{m.title}</a>{' '}
+                <a href={safeHref(m.url)} target="_blank" rel="noopener noreferrer nofollow" className="text-brand-700 hover:underline">{m.title}</a>{' '}
                 {m.is_syndicated && <Badge tone="amber">Syndicated copy</Badge>} {m.sentiment && <SentimentBadge label={m.sentiment} />}
                 <span className="block text-xs text-slate-600">{m.publisher ?? m.publisher_domain} · {m.published_at ? fmtDate(m.published_at) : `discovered ${fmtDate(m.discovered_at)}`}
                   {' · '}<Link className="text-brand-700 hover:underline" href={`/o/${org.id}/mentions/${m.id}`}>analysis</Link></span>

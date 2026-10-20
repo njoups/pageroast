@@ -5,7 +5,7 @@ import Link from 'next/link';
 import { SentimentBadge } from '@/components/ai';
 import { Alert, Badge, Empty, Loading, PageHeader } from '@/components/ui';
 import { SENTIMENT_LABEL, SENTIMENTS, STATUS_LABEL, TOPIC_LABEL, topicLabel, type Sentiment } from '@/lib/ai';
-import { api, canIngest, errorMessage, fmtDate, type Mention, type Project, type Source } from '@/lib/api';
+import { api, canIngest, errorMessage, fmtDate, type Mention, type Project, type Source, safeHref } from '@/lib/api';
 
 interface Filters { q: string; projectId: string; sourceId: string; language: string; topic: string; sentiment: string; entityId: string; clusterId: string; from: string; to: string; dateField: 'published' | 'discovered'; sort: 'published' | 'discovered' | 'relevance'; includeDuplicates: boolean }
 const EMPTY: Filters = { q: '', projectId: '', sourceId: '', language: '', topic: '', sentiment: '', entityId: '', clusterId: '', from: '', to: '', dateField: 'discovered', sort: 'published', includeDuplicates: false };
@@ -103,7 +103,7 @@ export default function MentionsPage() {
             {data.items.map((m) => (
               <li key={m.id} className="card p-4">
                 <div className="flex flex-wrap items-start justify-between gap-2">
-                  <a href={m.url} target="_blank" rel="noopener noreferrer nofollow" className="font-medium text-brand-700 hover:underline">{m.title}</a>
+                  <a href={safeHref(m.url)} target="_blank" rel="noopener noreferrer nofollow" className="font-medium text-brand-700 hover:underline">{m.title}</a>
                   <span className="flex flex-wrap gap-1">
                     {m.duplicate_status !== 'original' && <Badge tone="amber">{m.duplicate_status === 'duplicate' ? 'Duplicate' : 'Near duplicate'}</Badge>}
                     {m.sentiment && <SentimentBadge label={m.sentiment.label} uncertain={m.sentiment.uncertain} />}

@@ -18,3 +18,10 @@ export class ChangePasswordDto {
   @ApiProperty() @IsString() @MinLength(1) @MaxLength(128) currentPassword: string;
   @ApiProperty({ minLength: 12 }) @IsString() @MinLength(12) @MaxLength(128) newPassword: string;
 }
+export class PasswordResetRequestDto {
+  @ApiProperty() @Transform(lower) @IsEmail() @MaxLength(254) email: string;
+}
+export class PasswordResetConfirmDto {
+  @ApiProperty() @IsString() @MinLength(43) @MaxLength(43) token: string;
+  @ApiProperty({ minLength: 12 }) @IsString() @MinLength(12) @MaxLength(128) newPassword: string;
+}

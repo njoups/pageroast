@@ -47,7 +47,7 @@ export default function RulesPage() {
     api<Member[]>(`${base}/members`).then(setMembers).catch(() => undefined);
     api<Source[]>(`${base}/sources`).then(setSources).catch(() => undefined);
     api<{ entities: Array<{ id: string; name?: string }> }>(`${base}/analytics/entities?days=366&limit=100`).then((r) => setEntities(r.entities)).catch(() => undefined);
-    api<Array<{ id: string; name: string; verified_at: string | null }>>(`${base}/webhooks`).then(setWebhooks).catch(() => undefined);
+    api<Array<{ id: string; name: string; verified_at: string | null }>>(`${base}/webhooks/options`).then(setWebhooks).catch(() => undefined);
   }, [base, load]);
 
   if (!canAlerts.manage(org.role)) return <><PageHeader title="Alert rules" /><Alert tone="info">Alert rules are managed by owners, administrators and project managers.</Alert></>;

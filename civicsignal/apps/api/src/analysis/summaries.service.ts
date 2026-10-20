@@ -6,7 +6,7 @@ import { ANALYSIS_PROVIDER } from './providers';
 import type { AnalysisProvider } from './providers/provider';
 import { sanitizeMultiSummary } from './schemas';
 import { topicLabel } from './taxonomy';
-import { recordAiUsage } from './usage';
+import { quotaState, recordAiUsage } from './usage';
 
 const SYS = '00000000-0000-0000-0000-000000000000';
 
@@ -49,7 +49,7 @@ export class SummariesService {
   }
 
   /** LLM cluster summary for a specific cluster version (stale jobs are ignored). */
-  async generateClusterSummary(tenantId: string, clusterId: string, version: number): Promise<'done' | 'stale' | 'insufficient'> {
+  async generateClusterSummary(tenantId: string, clusterId: string, version: number): Promise<'done' | 'stale' | 'insufficient' | 'quota'> {
     const data = await this.db.withTenant(tenantId, SYS, async (c) => {
       const cl = (await c.query<{ version: number; status: string }>('SELECT version, status FROM story_clusters WHERE id = $1', [clusterId])).rows[0];
       if (!cl || cl.version !== version || cl.status !== 'active') return null;
@@ -59,6 +59,8 @@ export class SummariesService {
       return records;
     });
     if (!data) return 'stale';
+    const quota = await this.db.withTenant(tenantId, SYS, (c) => quotaState(c));
+    if (quota.tokensThisMonth >= quota.monthlyTokenLimit) { logEvent('info', 'analysis.summary_quota_reached', { tenantId, clusterId }); return 'quota'; }
     const refs = new Map(data.map((r, i) => [`R${i + 1}`, r.id]));
     const res = await this.provider.summarize({
       scope: 'cluster', language: 'id',
@@ -113,7 +115,10 @@ export class SummariesService {
       return;
     }
     let llm: { s: ReturnType<typeof sanitizeMultiSummary>; model: string; promptVersion: string; usage: { inputTokens: number; outputTokens: number; cacheReadTokens: number } } | null = null;
-    if (this.generative && records.length) {
+    // The tenant's monthly AI token limit applies to summaries as it does to article analysis and reports.
+    const quota = this.generative && records.length ? await this.db.withTenant(tenantId, SYS, (c) => quotaState(c)) : null;
+    if (quota && quota.tokensThisMonth >= quota.monthlyTokenLimit) logEvent('info', 'analysis.summary_quota_reached', { tenantId, summaryId });
+    if (this.generative && records.length && quota && quota.tokensThisMonth < quota.monthlyTokenLimit) {
       try {
         const refs = new Map(records.map((r, i) => [`R${i + 1}`, r.id]));
         const res = await this.provider.summarize({ scope: s.scope as 'project' | 'period', language: 'id',

@@ -97,7 +97,10 @@ export class MentionsService {
          ${all ? '' : `AND EXISTS (SELECT 1 FROM mention_matches mm JOIN project_members pm ON pm.project_id = mm.project_id AND pm.user_id = $2 WHERE mm.mention_id = m.id)`}`,
         all ? [id] : [id, auth.userId])).rows[0];
       if (!r) throw notFound('Mention');
-      const duplicates = (await c.query(`SELECT id, title, url, publisher, duplicate_status, duplicate_reason, discovered_at FROM mentions WHERE duplicate_of = $1 ORDER BY discovered_at`, [id])).rows;
+      // Duplicates are listed only when they are themselves visible to the caller (a copy may match another project only).
+      const duplicates = (await c.query(`SELECT d.id, d.title, d.url, d.publisher, d.duplicate_status, d.duplicate_reason, d.discovered_at FROM mentions d
+        WHERE d.duplicate_of = $1 AND ($2::boolean OR EXISTS (SELECT 1 FROM mention_matches mm JOIN project_members pm ON pm.project_id = mm.project_id
+          WHERE mm.mention_id = d.id AND pm.user_id = $3)) ORDER BY d.discovered_at`, [id, all, auth.userId])).rows;
       return { ...r, duplicates, dataOrigin: 'live' };
     });
   }

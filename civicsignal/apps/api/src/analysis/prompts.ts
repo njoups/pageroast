@@ -65,10 +65,13 @@ export function wrapUntrusted(text: string, attrs: Record<string, string> = {}):
   return `<source_document nonce="${nonce}"${attrStr}>\n${safe}\n</source_document nonce="${nonce}">`;
 }
 
+/** Upper bound on article text sent to a provider (cost and resource control); evidence checks still use the stored text. */
+export const MAX_PROVIDER_BODY_CHARS = 30_000;
+
 export function articleUserMessage(input: { title: string; excerpt: string | null; body: string | null; publisher: string | null; language: string; customTopics: CustomTopic[] }): string {
   const taxonomy = [...DEFAULT_TOPICS.map((t) => `- ${t.key}: ${t.label} (${t.description})`),
     ...input.customTopics.map((t) => `- ${t.key}: ${t.label}${t.description ? ` (${t.description.slice(0, 200)})` : ''}`)].join('\n');
-  const content = [`Headline: ${input.title}`, input.excerpt ? `Excerpt: ${input.excerpt}` : null, input.body ? `Body: ${input.body}` : null].filter(Boolean).join('\n');
+  const content = [`Headline: ${input.title}`, input.excerpt ? `Excerpt: ${input.excerpt}` : null, input.body ? `Body: ${input.body.slice(0, MAX_PROVIDER_BODY_CHARS)}` : null].filter(Boolean).join('\n');
   return `Taxonomy version ${TAXONOMY_VERSION}. Allowed topic keys:\n${taxonomy}\n\nDetected language: ${input.language}.\n` +
     `Available text: ${input.body ? 'headline, excerpt and body' : input.excerpt ? 'headline and excerpt' : 'headline only'}.\n\n` +
     wrapUntrusted(content, { publisher: input.publisher ?? 'unknown' });

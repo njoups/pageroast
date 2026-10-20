@@ -10,7 +10,7 @@ export const PERMISSIONS = [
   // Reserved for later milestones; listed now so the matrix is reviewed once.
   'sources:read', 'sources:manage', 'mentions:read', 'alerts:read', 'alerts:acknowledge', 'alerts:manage',
   'reports:read', 'reports:generate', 'billing:read', 'billing:manage', 'retention:manage', 'data:export', 'data:delete',
-  'analysis:reprocess', 'ai:settings',
+  'analysis:reprocess', 'ai:settings', 'integrations:manage',
 ] as const;
 export type Permission = (typeof PERMISSIONS)[number];
 
