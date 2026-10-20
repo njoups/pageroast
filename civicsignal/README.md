@@ -4,7 +4,11 @@ Multi-tenant media monitoring and public-issue intelligence platform (Indonesia-
 **Status:** Milestones 1 (foundation), 2 (news ingestion: RSS/Atom verified live, GDELT implemented but not verified live) and
 3 (AI intelligence: analysis pipeline, stories, summaries, analytics) and 4 (issue detection and alerting: explainable rules, severity,
 lifecycle, in-app/email/webhook notifications) and 5 (analytics and executive reporting: dashboard, five report templates, PDF/CSV,
-scheduling) are done. Without `ANTHROPIC_API_KEY`, analysis uses a
+scheduling) are done. A production-readiness hardening pass (2026-10-20) added session idle timeout and management, password
+reset, a tamper-evident audit chain, enforced retention, legal hold, four-eyes deletion, readiness and metrics, CI security stages and
+a verified backup/restore drill. It is **not** production-ready yet and holds no certification: see
+[docs/PRODUCTION_READINESS_ASSESSMENT.md](docs/PRODUCTION_READINESS_ASSESSMENT.md) (blocking items: MFA via an IdP, staging with
+PITR, an external penetration test, legal review). Without `ANTHROPIC_API_KEY`, analysis uses a
 rule-based baseline, labelled as such, whose tone estimates are weak; the AI-model adapter has not yet been verified against the
 live API. Email has been verified against a local SMTP server only; WhatsApp is an unconfigured adapter.
 Current, evidence-based status: [docs/IMPLEMENTATION_STATUS.md](docs/IMPLEMENTATION_STATUS.md). Connectors: [docs/CONNECTORS.md](docs/CONNECTORS.md).
@@ -14,13 +18,14 @@ Current, evidence-based status: [docs/IMPLEMENTATION_STATUS.md](docs/IMPLEMENTAT
 - Alerts: [docs/ALERT_RULES.md](docs/ALERT_RULES.md) · [docs/NOTIFICATIONS.md](docs/NOTIFICATIONS.md) · Operations: [docs/RUNBOOK.md](docs/RUNBOOK.md)
 - AI: [docs/AI_PROVIDERS.md](docs/AI_PROVIDERS.md) (configuration) · [docs/AI_EVALUATION.md](docs/AI_EVALUATION.md) (measured quality and limits)
 - Architecture: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) · Security: [docs/SECURITY.md](docs/SECURITY.md) · Data governance: [docs/DATA_GOVERNANCE.md](docs/DATA_GOVERNANCE.md)
+- Production: [readiness assessment](docs/PRODUCTION_READINESS_ASSESSMENT.md) · [deployment and rollback](docs/DEPLOYMENT.md) · [backup and recovery](docs/BACKUP_AND_RECOVERY.md) · [disaster recovery](docs/DISASTER_RECOVERY.md) · [incident response](docs/INCIDENT_RESPONSE.md) · [supply chain](docs/SUPPLY_CHAIN.md) · [load testing](docs/LOAD_TESTING.md)
 
 ## Layout
 ```
 apps/api   NestJS REST API (/api/v1, OpenAPI at /api/docs)
 apps/web   Next.js App Router UI (proxies /api/v1 to the API, same-origin)
 db/migrations  Plain SQL migrations (immutable once applied, checksummed)
-scripts    backup.sh / restore.sh
+scripts    backup.sh / restore.sh / verify-restore.sh (restore drill), scan-secrets.mjs, check-licenses.mjs, load/ (load test)
 ```
 
 ## Run locally (without Docker)
@@ -51,10 +56,12 @@ To make an operator a platform admin (tenant metadata only, no content access):
 
 ## Run with Docker Compose
 ```bash
-cp .env.example .env    # set real passwords
+cp .env.example .env    # fill every empty value (openssl rand -hex 24; CREDENTIALS_KEY: openssl rand -base64 32)
 docker compose up --build
 ```
-The Compose file passes `docker compose config` validation. It has not been run end-to-end yet because no Docker daemon was available while it was written.
+The api and web images were built and smoke-tested on 2026-10-20 (API readiness OK, web served `/login`, Trivy clean). A full
+`docker compose up` of all services together has not been run yet. Compose is for local use only (`APP_ENV=local`); staging and
+production are described in [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md).
 
 ## Tests
 ```bash
@@ -69,8 +76,9 @@ The suite drops and recreates the `civicsignal_test` database and flushes Redis 
 | Service | Needed for | Status |
 |---|---|---|
 | PostgreSQL 16 | everything | required |
-| Managed IdP (Supabase Auth / OIDC) | MFA, password recovery, production auth | **not configured**: local adapter in use |
-| Email (SMTP) | alert emails (invitations still use manual links) | `SMTP_URL` + `EMAIL_FROM`; verified against a local SMTP server only |
+| Managed IdP (OIDC) | **MFA** (blocking for production) | **not configured**: local adapter in use; it has no MFA |
+| Email (SMTP) | alert emails, password-reset emails (invitations still use manual links) | `SMTP_URL` + `EMAIL_FROM`; verified against a local SMTP server only. Without it, password reset returns 503. |
+| `METRICS_TOKEN` | `/metrics` scraping | optional; `/metrics` is 404 without it |
 | WhatsApp Business Cloud API | optional alert channel | **not configured**; shown as unconfigured |
 | Redis | ingestion and analysis queues, worker gates | required for collection and analysis |
 | `CREDENTIALS_KEY` | encrypting connector credentials and webhook signing secrets | required for webhooks |

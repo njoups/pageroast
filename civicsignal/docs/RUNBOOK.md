@@ -126,4 +126,45 @@ rotation as follows:
 ## Database
 - **Migrations:** `npm run migrate`. They are checksummed and refuse to run if an applied file was edited. 0008 refuses to
   replace the old placeholder alert tables if they hold data.
-- **Backup and restore:** `scripts/backup.sh`, `scripts/restore.sh`; see SECURITY.md.
+- **Backup and restore:** `scripts/backup.sh`, `scripts/restore.sh`, and `scripts/verify-restore.sh` to prove a backup.
+  See BACKUP_AND_RECOVERY.md, which has the verification record and what each drill proves.
+- **Migration 0011** blocks writes to `sentiment_results` while its index builds. On a large table, pre-create it concurrently (DEPLOYMENT.md).
+
+## Health, metrics and alerts
+- `GET /health/live`: process is up (use for restarts). `GET /health/ready`: database, Redis and migrations current, 503 otherwise (use for load-balancer routing and the post-deploy check). Neither reveals versions or configuration.
+- **Worker:** the container healthcheck runs `node apps/api/dist/worker-health.js`, which checks the worker heartbeat.
+- **`GET /metrics`** (Prometheus text) needs `Authorization: Bearer $METRICS_TOKEN` and returns 404 when the token is unset. It is cached 15 s, and gauges are summed across tenants (no tenant names).
+  - HTTP: `civicsignal_http_requests_total{method,route,status}`, `civicsignal_http_request_duration_seconds`, `civicsignal_http_in_flight`.
+  - Process: `process_*`.
+  - Work: `civicsignal_queue_jobs{queue,state}`, `civicsignal_queue_lag_seconds`, `civicsignal_workers`, `civicsignal_ingestion_overdue_seconds`, `civicsignal_report_runs_last_hour`, `civicsignal_analysis_failures_last_hour`, `civicsignal_notification_failures_last_hour`, `civicsignal_webhook_failures_last_hour`, `civicsignal_tenants_ai_quota_exhausted`, `civicsignal_report_artifact_bytes`, `civicsignal_database_bytes`.
+- **Access logs** are one JSON line per request (`event: http.request`) with `requestId`, `route` (template, not the raw path), status, duration, `userId` and `tenantId`. The same `requestId` is on error responses and audit events, so one id links all three.
+
+Suggested alerts (thresholds are starting points; tune after a week of staging data):
+| Alert | Condition | Severity |
+|---|---|---|
+| API not ready | `/health/ready` ≠ 200 for 2 min | page |
+| Error rate | 5xx > 2% of requests over 5 min | page |
+| Latency | p95 > 1 s over 10 min (exclude report downloads) | ticket |
+| Worker down | `civicsignal_workers` = 0 for 5 min | page |
+| Queue backlog | `civicsignal_queue_lag_seconds` > 900 | ticket |
+| Collection stale | `civicsignal_ingestion_overdue_seconds` > 2 × refresh interval | ticket |
+| Delivery failures | webhook or notification failures in the last hour > 10 | ticket |
+| Auth abuse | rate of `auth.login_failed` audit events, or 429s on `/api/v1/auth/*`, 10× baseline | ticket (page if sustained) |
+| DB growth | `civicsignal_database_bytes` > 80% of allocated storage | ticket |
+
+## Retention and deletion
+- **Status per tenant:** `GET /api/v1/organizations/:orgId/data-governance` returns controls, policies and recent `retention_runs`.
+- **Before enabling retention for a tenant:** run `POST …/retention/preview` and share the counts with the data owner.
+- **The worker applies retention** at most daily per tenant, every 15 min tick. A run is skipped (and audited as `retention.skipped`) when retention is disabled or a legal hold is active.
+- **Large backlogs** are processed 2,000 records per class per run. Expect several days for a big first purge, or run `apply` repeatedly.
+- **Deletion requests** need a second owner to approve. `GET …/deletion-requests` lists them with their status; approve or reject pending ones with a note.
+- **After a database restore:** re-apply deletion requests completed after the backup was taken (BACKUP_AND_RECOVERY.md).
+
+## Session and account emergencies
+- **One user:** they can use "sign out other sessions". An operator can run `UPDATE sessions SET revoked_at = now() WHERE user_id = '<id>' AND revoked_at IS NULL` (owner).
+- **Everyone:** the same statement without the user filter. Users must log in again.
+- **Password reset email not arriving:** check `SMTP_URL` and `EMAIL_FROM` and the audit event `auth.reset_email_failed`. Without SMTP the endpoint returns 503 (`recovery_unavailable`).
+
+## Drills
+- **Restore drill:** `ADMIN_DATABASE_URL=… scripts/verify-restore.sh <latest backup>`, quarterly and after data-rewriting migrations. Record the result in BACKUP_AND_RECOVERY.md.
+- **Load regression:** `scripts/load/` (LOAD_TESTING.md) before releases that touch search, analytics or the worker.

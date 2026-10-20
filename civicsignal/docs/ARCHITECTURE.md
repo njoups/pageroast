@@ -104,13 +104,14 @@ The browser never talks to the database directly. Browser→API calls are same-o
 | Module | Responsibility |
 |---|---|
 | `database` | Pool, migrations runner, `withTenant()` / `withSystem()` transaction helpers |
-| `identity` | `IdentityProvider` port; `LocalIdentityProvider` (scrypt + opaque DB sessions) |
-| `auth` | Register/login/logout/me, session guard, rate limiting |
+| `identity` | `IdentityProvider` port; `LocalIdentityProvider` (scrypt + opaque DB sessions with absolute and idle expiry, session list/revoke, password-reset tokens) |
+| `auth` | Register/login/logout/me, sessions, password reset, session guard (`__Host-cs_session`), Redis-shared rate limiting |
 | `organizations` | Org creation, settings, memberships, invitations |
 | `projects` | Projects, project members, archive/delete |
-| `audit` | Append-only audit writer and viewer |
+| `audit` | Append-only audit writer (event id, outcome, request id, redacted metadata) and viewer; a trigger hash-chains every event per tenant |
 | `authz` | Role → permission matrix, `@RequirePermission()` guard |
-| `health` | Liveness/readiness |
+| `health` | `/health/live` (process), `/health/ready` (database, Redis, migrations current), token-protected `/metrics` (HTTP, queue, ingestion, report, notification, AI-quota and DB-size gauges); request metrics and access-log middleware |
+| `governance` | Retention enforcement (`RetentionService`, daily per tenant, advisory-locked, dry-run counts, ledger), legal hold, four-eyes deletion requests, `purgeMentions` (cascade + artifact expiry + analytics invalidation) |
 | `analytics` | Analytics engine (coverage, sentiment, share of voice, sources, topics, entities, issues, overview), hourly aggregation, cache, time-zone math |
 | `reports` | Report definitions, templates, generator (evidence workflow), PDF/CSV renderers, schedules, queue + scheduler, downloads |
 
@@ -132,18 +133,23 @@ against arbitrary SQL execution by an attacker who already controls the app's da
 
 ## Identity
 `IdentityProvider` abstracts credential verification and session issuance. `LocalIdentityProvider` stores scrypt hashes and
-SHA-256 hashes of opaque 256-bit session tokens. It exists so the product runs without external credentials. A managed
-provider (Supabase Auth / OIDC with MFA) must be added behind the same port before production. MFA is **not** implemented.
+SHA-256 hashes of opaque 256-bit session tokens. Sessions expire absolutely (`SESSION_TTL_SECONDS`, ≤ 7 days) and after
+inactivity (`SESSION_IDLE_SECONDS`); users can list and revoke them. Password reset uses single-use hashed tokens by email and
+revokes every session. The local provider exists so the product runs without external credentials; it reports
+`capabilities.mfa = false`. A managed OIDC provider with MFA must be added behind the same port before production. MFA is
+**not** implemented, and none is emulated.
 
 ## Authorization
 Roles: `platform_admin` (user flag, not a membership), `owner`, `admin`, `project_manager`, `analyst`, `report_viewer`.
 The matrix lives in `apps/api/src/authz/permissions.ts` and is the single source of truth; docs/SECURITY.md mirrors it.
 Platform admins hold no tenant permissions. Operational access to customer content will use time-boxed, reasoned,
-audited break-glass grants (M6).
+audited break-glass grants (not built). Denied tenant access by a member is audited (`authz.denied`).
 
 ## Error envelope
 `{ "error": { "code": "validation_failed", "message": "...", "details": [...], "requestId": "..." } }`
 
 ## Data model
-See `db/migrations` (0001–0008). 0008 adds the alerting tables (see ALERT_RULES.md) and replaces the unused placeholder alert tables. 0007 adds `mention_analyses`, `entities`/`entity_aliases`, `project_topics`, `cluster_members`/`cluster_events`,
+See `db/migrations` (0001–0011). 0011 adds a search index found missing by the load test. 0010 adds session idle tracking,
+password-reset tokens, the audit hash chain (`audit_chain_heads`, `audit_verify_chain`), `tenant_data_controls` (legal hold),
+`retention_runs` and `deletion_requests`. 0009 is analytics and reporting. 0008 adds the alerting tables (see ALERT_RULES.md) and replaces the unused placeholder alert tables. 0007 adds `mention_analyses`, `entities`/`entity_aliases`, `project_topics`, `cluster_members`/`cluster_events`,
 `ai_summaries`, `ai_usage_records`, `ai_pricing`, `ai_prompt_versions`, `ai_tenant_settings`. Tables for alerts, reports and billing exist but are not yet used.

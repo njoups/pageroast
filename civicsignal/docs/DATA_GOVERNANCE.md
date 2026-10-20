@@ -72,11 +72,50 @@
   record (model, metrics, cited record ids) remains as history. Analytics cache entries expire after 15 minutes and are purged
   hourly.
 
-## Retention
-`retention_policies` stores per-tenant, per-data-class retention. Defaults are conservative; enforcement jobs arrive in M6.
-Retention may be shortened by a source licence but never lengthened beyond it.
-Report runs keep the ids of cited records. When record retention is enforced (M6), deleting a record also removes it from
-`report_run_sources` (cascade); the stored report model keeps only the headline, publisher and URL it quoted.
+## Retention, legal hold and deletion (implemented 2026-10-20)
+Retention is **off until a tenant enables it** (`PUT …/data-governance/controls { retentionEnabled: true }`, `retention:manage`). Nothing is deleted by default. The applicable legal retention duties (archives, public-information, sector rules) and licence terms must be checked with counsel before a tenant turns it on.
+
+**Policies** (`PUT /organizations/:orgId/data-governance/retention-policies/:dataClass`, `retention:manage`):
+
+| Data class | Effect when older than N days |
+|---|---|
+| `mention_body` | Article body cleared; metadata, matches and analysis kept |
+| `mention_metadata` | Record deleted with everything derived from it (see purge below) |
+| `derived_analysis` | Superseded (non-current) analyses and summaries deleted; current ones kept |
+| `reports` | Report runs and their files deleted |
+| `audit_events` | **Not deleted**: must be ≥ 365 days; reported only (SECURITY.md, audit log) |
+| source licence | Always applied when retention is enabled: records past their source's `retention_expires_at` are deleted. A licence can shorten retention, never lengthen it. |
+
+**Execution:**
+- The worker runs each tenant at most daily, under an advisory lock.
+- `POST …/retention/preview` returns exact counts without changing anything. `POST …/retention/apply` (`data:delete`) runs it now.
+- Each run writes a `retention_runs` ledger row and an audit event (`retention.applied`, `retention.previewed` or `retention.skipped`).
+- Records cited as evidence by an **open issue** are kept until the issue closes.
+- Work is done in batches of 2,000 per class per run.
+
+**Legal hold** (`PUT …/data-governance/controls { legalHold: true, legalHoldReason }`):
+- stops all retention purges and blocks deletion requests for the tenant;
+- is audited (`data_controls.updated`);
+- does not stop collection.
+
+**Deletion requests** (`/organizations/:orgId/deletion-requests`, `data:delete`, owners only):
+1. Request a scope: specific mentions (≤ 1,000 ids), everything from one source, or a full-text search. A reason is required. The request resolves the scope to record ids **at request time**, at most 20,000; larger scopes must be split or handled by retention.
+2. **Four-eyes:** a *different* owner approves. A sole owner must pass `confirmSelfApproval: true`, which is recorded.
+3. On approval, the records are purged and the request becomes `completed` (`deletion.completed`). Requests can be rejected or cancelled while pending.
+
+**Purge** (`governance/purge.ts`), for both retention and deletion requests:
+- expires report files that cited the records (download → 410) and appends a limitation note to those runs;
+- deletes AI summaries that used them and clears issue AI summaries;
+- deletes the mentions (cascading matches, analyses, entities, topics, sentiment, cluster membership, report citations);
+- recomputes or dissolves clusters;
+- invalidates analytics aggregates and drops the analytics cache.
+
+**Limits (stated to requesters):**
+- Deletion acts on the **live database only**. Copies remain in backups until those backups expire (BACKUP_AND_RECOVERY.md, backups and deletion). After a restore, executed deletions must be re-applied.
+- Files users already downloaded, emails already sent and webhook payloads already delivered are outside the system's control.
+- Audit events keep the ids and counts of what was deleted, never the content.
+
+Report runs keep the ids of cited records. Deleting a record also removes it from `report_run_sources` (cascade). The stored report model keeps only the headline, publisher and URL it quoted.
 
 ## Source licence registry
 The `sources` table (with `connectors`) is the registry. No source is seeded. Operators enter the authorization basis.

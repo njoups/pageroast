@@ -97,13 +97,32 @@ Last verified: 2026-10-20, from code, test runs and live collection (not from pl
 | Reliability: retries (transient failures re-queued, final failure visible), abandoned-run sweep, long-queued cancellation, orphan re-queue, per-tenant daily/concurrent quotas, platform report health endpoint | e2e, `GET /platform/reports` |
 | **Live:** migration applied to the dev DB (211 real records preserved); 8 reports generated from the 50 matched records (CNN Indonesia, ANTARA); AI commentary reported as unavailable (baseline provider) | dev database |
 
+### Production-readiness hardening (verified 2026-10-20 in the development container; no staging or production exists)
+Full findings, severities, open risks and acceptance criteria: [PRODUCTION_READINESS_ASSESSMENT.md](PRODUCTION_READINESS_ASSESSMENT.md).
+| Area | Evidence |
+|---|---|
+| Sessions: idle timeout, `last_seen_at`, list/revoke one/revoke others; `__Host-cs_session` cookie | `integration/security.e2e.ts` |
+| Password reset by email (single-use hashed token, 30 min, 3/h, uniform response, revokes sessions; 503 without SMTP); web pages `/forgot-password`, `/reset-password` (token from URL fragment) | security e2e; web build |
+| Rate limits shared across API instances via Redis; refused off in production | security e2e (two app instances) |
+| Tenant isolation audit: cross-tenant route matrix, DB-level isolation for every tenant table, jobs with a foreign tenant id, artifact downloads; 10 authorization/visibility leaks fixed (F1–F7) | security, analysis, alerts e2e |
+| Audit: event id, outcome, request id, per-tenant SHA-256 hash chain with tamper detection; credential-like metadata redacted; `authz.denied` audited | security e2e, unit tests |
+| Retention enforcement (licence expiry, body, metadata, derived analysis, reports; dry-run; ledger; daily), legal hold, four-eyes deletion requests, purge with artifact expiry and analytics invalidation | security e2e |
+| Startup configuration validation; production refusals; secrets redacted from logs and errors; Swagger off in production | `unit/security.spec.ts` |
+| `/health/live`, `/health/ready` (DB, Redis, migrations), `/metrics` (token), access logs with request id; worker heartbeat healthcheck | security e2e; container smoke |
+| Resource limits: linear HTML stripping (was quadratic), markup cap, body-size errors 413/400, AI summary quota + rate limit, dashboard span cap | unit + e2e |
+| CSP nonce + `strict-dynamic`; `safeHref`; IPv6 SSRF ranges; GCM tag length | web tests; production container check |
+| Backup with manifest (rows, migrations, privilege fingerprint) + checksum + optional GPG; `verify-restore.sh` 6-step drill incl. privilege comparison; drill in CI | BACKUP_AND_RECOVERY.md verification record |
+| Load-test harness and results (one 4-vCPU host; not a capacity claim); search fix from it (migration 0011) | LOAD_TESTING.md |
+| CI: secret scan (tree + history), licence review, restore drill, image build + Trivy; manual deploy workflow with approval and readiness check | `.github/workflows/` |
+| Images: Debian updates applied, no npm in runtime, non-root; Trivy 0 fixable HIGH/CRITICAL; api ready and web `/login` served from the containers | SUPPLY_CHAIN.md |
+
 ## Partially implemented
 - **AI report commentary:** implemented and tested with the deterministic test provider only. No API key was available, so it has
   **not** run against a live model. With the baseline provider, reports say that AI commentary is unavailable.
 - **Report email delivery:** reuses the SMTP channel (link only). Verified in tests as recorded `unconfigured`; the alert email path was
   verified against a local SMTP server in Milestone 4. No third-party provider has been tested.
-- **Deleted records and the analytics cache:** a deletion does not change the data stamp, so a cached response can include a deleted
-  record for up to 15 minutes (or until the next full rebuild). Timelines are protected by the aggregate self-check.
+- **Deleted records and the analytics cache:** resolved. Retention and deletion purges now invalidate aggregates and drop the
+  analytics cache in the same transaction (`governance/purge.ts`).
 - **GDELT connector:** implemented and contract-tested. **Not verified live**: every attempt from this environment returned
   429/503 (shared egress IP). Health shows it honestly as failing.
 - **Second *licensed* connector:** none. No commercial provider or publisher API is contracted. Encrypted credential storage
@@ -120,16 +139,17 @@ Last verified: 2026-10-20, from code, test runs and live collection (not from pl
 - **Source reliability** is not scored (no reliability metadata yet); recorded as such in every severity breakdown.
 - **Summaries on headline-only sources:** live sources permit headlines only, so mention summaries are mostly "insufficient evidence"
   and cluster/project summaries are extractive (quotes and counts).
-- **Retention:** expiry is computed per record, but nothing deletes expired records yet (Milestone 6).
-- **Identity:** local adapter only (no MFA, no password reset, no email verification).
-- **Rate limiting of login:** in-process memory per API instance (ingestion gates are in Redis).
+- **Retention:** enforced when a tenant enables it (off by default); audit events are never purged by it. Retention defaults for a
+  tenant still need a legal decision.
+- **Identity:** local adapter only: password reset and session management exist; **no MFA** and no email verification.
 - **Client IP** is trustworthy only behind an edge proxy that overwrites `X-Forwarded-For` (Caddy in Compose).
-- **Docker Compose** (now with Redis + worker) validates, but images and stack have **not** been run (no Docker daemon available).
+- **Docker images** build and were smoke-tested individually (API ready against PostgreSQL and Redis; web served `/login`). A full
+  `docker compose up` of all services together has **not** been run.
 - **Conditional GET:** a 304 has been verified only against the local test server. Live feeds changed every minute or sent no ETag.
 
 ## Missing
-Entity/summary/clustering quality evaluation, report branding beyond colour (logo upload), PDF/UA tagging (accessible PDF structure), analyst annotations (UI area reserved; no storage yet), billing/metering enforcement, retention jobs,
-export/deletion workflows, break-glass support access, social connectors, licensed-provider connector.
+Entity/summary/clustering quality evaluation, report branding beyond colour (logo upload), PDF/UA tagging (accessible PDF structure), analyst annotations (UI area reserved; no storage yet), billing/metering enforcement,
+tenant data export, MFA (needs an IdP), staging/production infrastructure, break-glass support access, social connectors, licensed-provider connector.
 
 ## Broken
 None known. All automated tests pass (see bottom).
@@ -190,7 +210,7 @@ None known. All automated tests pass (see bottom).
    `app.tenant_id`/`app.system` and read any tenant. RLS guards against logic bugs, not SQL injection.
    Mitigations: parameterised queries only (no SQL string building with input), column grants, and no TEMP.
    Recommended later: per-request signed context or a separate role for system flows.
-2. Local identity adapter in use (no MFA). Required before government production use.
+2. Local identity adapter in use (no MFA). An MFA-capable IdP is required before government production use.
 3. Per-account lockout can be triggered by an attacker against a known email (bounded to 15 minutes).
 4. **AI provider data flow:** when a key is configured, permitted source text (headline/excerpt/body) and project category names are
    sent to the provider. No account data or analyst input is sent. Prompt injection is contained by the evidence check (output can only
@@ -201,6 +221,7 @@ None known. All automated tests pass (see bottom).
 6. **Webhook payloads leave the platform** (issue title, counts, source links) to tenant-verified HTTPS endpoints; tenants control those endpoints.
 7. **Report artifacts are stored in PostgreSQL (bytea)** until expiry. Backups contain them; backup retention must match the
    report retention policy. Moving them to object storage with server-side encryption is recommended at scale.
+8. The full list with severities and acceptance criteria is in PRODUCTION_READINESS_ASSESSMENT.md §2.2.
 
 ## Data-source and licensing risks
 - **No source has been legally reviewed.** The two live RSS sources are registered "for limited integration test only", with a basis
@@ -209,10 +230,35 @@ None known. All automated tests pass (see bottom).
   them per record, but **deciding** what is permitted is a legal task.
 - Both real feeds embed full article text (`content:encoded`); it is discarded unless the source is marked `permitsFullText`.
 - GDELT's terms permit unrestricted use with citation, but its rate limits make it unsuitable as a primary source at volume.
-- Retention periods are recorded but not yet enforced by deletion.
+- Source retention periods are enforced by deletion once a tenant enables retention.
 
 ## Required external credentials
 Managed IdP · email provider (SMTP: `SMTP_URL`, `EMAIL_FROM`) · WhatsApp Business Cloud API (optional) · Redis (required for collection and analysis) · `ANTHROPIC_API_KEY` (for AI-model analysis; baseline otherwise) · `CREDENTIALS_KEY` (webhook signing secrets; credentialed connectors) · a licensed news provider or publisher API contract (for a commercial second connector) · written source authorizations.
+
+## Defects found during production hardening (all fixed)
+See PRODUCTION_READINESS_ASSESSMENT.md §2.1 for the full list.
+The most serious:
+- authorization and visibility leaks F1–F3;
+- a restore path that widened app-role privileges (R-1);
+- retention never enforced (G1);
+- quadratic HTML stripping (M2);
+- slow deep-page mention search (M11);
+- fixable HIGH/CRITICAL CVEs in the runtime images (M13).
+
+## Test results (2026-10-20, after production hardening)
+| Command | Result |
+|---|---|
+| `npm run lint`, `npm run typecheck` (API + web) | ✔ |
+| API jest (Postgres 16 + Redis 7) | **469 passed, 0 failed, 0 skipped** (27 suites; up from 423) |
+| web `node:test` | 12 passed |
+| `npm run build` (API + web) | ✔ |
+| `npm audit --omit=dev` | 0 vulnerabilities (all dependencies: 39 in dev tooling, see SUPPLY_CHAIN.md) |
+| `node scripts/check-licenses.mjs` | 201 production packages, pass (2 reviewed exceptions) |
+| `node scripts/scan-secrets.mjs --history` | 0 findings |
+| Restore drill (dev DB, PG16) | 6/6 checks incl. 94-object privilege comparison; negative test fails as expected |
+| Migrations on the dev DB | 0010 and 0011 applied; 4 audit chains (82 events) verify |
+| Images | api and web build; Trivy 0 fixable HIGH/CRITICAL; containers smoke-tested |
+| Load test | LOAD_TESTING.md (single 4-vCPU host; no capacity claim) |
 
 ## Test results (2026-10-20, after Milestone 5)
 | Command | Result |
@@ -267,8 +313,17 @@ Found and fixed during the run: a test helper bug, a Jest parallelism issue (tes
 now in the config), and a real calibration issue from live data (60-day `max-age` on a live feed, now capped).
 
 ## Next milestone
-**Milestone 6, commercial readiness:** metering and server-enforced plan limits (building on the per-tenant report quotas), billing
-port, **retention jobs** (records, report artifacts already expire), export/deletion workflows, break-glass support access,
-monitoring and hardening (managed IdP with MFA). Before relying on tone figures or AI commentary in production, configure and evaluate
-an AI model (`npm run eval:ai -- --llm`) and generate a report with commentary against it. Configure a real email provider. Still
-recommended: legal review of publisher terms and of excerpt redistribution in exports, and a licensed full-text source.
+**Staging and identity (blocking for production):**
+1. An OIDC identity provider with enforced MFA behind the `IdentityProvider` port; local passwords off in production.
+2. A staging environment per DEPLOYMENT.md (managed PostgreSQL with PITR, Redis with AUTH and TLS, TLS load balancer with WAF, egress proxy, secret manager, deployment agent). Then record a PITR drill and a rollback rehearsal with measured times, and a staging load and soak test.
+3. An external penetration test.
+4. Legal review (UU PDP basis, residency, AI-provider transfer, source licences, breach notification).
+
+Also remaining:
+- digest and SHA pinning, SBOM and image signing;
+- edge rate limiting for auth;
+- a configurable DB pool;
+- the low-severity items in the assessment;
+- metering and billing, tenant export, and break-glass access.
+
+Before relying on tone figures or AI commentary, configure and evaluate an AI model (`npm run eval:ai -- --llm`).
