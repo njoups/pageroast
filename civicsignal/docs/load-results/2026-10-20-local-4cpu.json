@@ -1,0 +1,403 @@
+{
+  "startedAt": "2026-10-20T01:01:06.169Z",
+  "host": {
+    "cpus": 4,
+    "cpuModel": "Intel(R) Xeon(R) Processor @ 2.10GHz",
+    "memGB": 15.7,
+    "node": "v22.22.0"
+  },
+  "dataset": {
+    "tenants": 3,
+    "mentionsPerTenant": 20000
+  },
+  "config": {
+    "durationS": 30,
+    "concurrency": 16
+  },
+  "scenarios": [
+    {
+      "scenario": "auth.login",
+      "concurrency": 4,
+      "durationS": 30.1,
+      "requests": 1159,
+      "okRate": 1,
+      "rps": 38.5,
+      "p50": 103,
+      "p95": 124.4,
+      "p99": 138.2,
+      "max": 167.6,
+      "statuses": {
+        "200": 1159
+      },
+      "ops": {
+        "auth.login": {
+          "n": 1159,
+          "p50": 103,
+          "p95": 124.4
+        }
+      },
+      "resources": {
+        "api": {
+          "cpuPctOfOneCore": 340.9,
+          "rssMaxMB": 285
+        },
+        "worker": {
+          "cpuPctOfOneCore": 0.5,
+          "rssMaxMB": 140
+        },
+        "db": {
+          "xactsPerSec": 111,
+          "cacheHitPct": 99.53,
+          "blocksReadFromDisk": 250,
+          "tempMB": 0,
+          "deadlocks": 0,
+          "maxActive": 2,
+          "maxConnections": 10
+        }
+      }
+    },
+    {
+      "scenario": "search",
+      "concurrency": 16,
+      "durationS": 30.1,
+      "requests": 5048,
+      "okRate": 1,
+      "rps": 167.9,
+      "p50": 93.3,
+      "p95": 132,
+      "p99": 153.6,
+      "max": 198.9,
+      "statuses": {
+        "200": 5048
+      },
+      "ops": {
+        "mentions.search": {
+          "n": 5048,
+          "p50": 93.3,
+          "p95": 132
+        }
+      },
+      "resources": {
+        "api": {
+          "cpuPctOfOneCore": 46.4,
+          "rssMaxMB": 289
+        },
+        "worker": {
+          "cpuPctOfOneCore": 0.2,
+          "rssMaxMB": 107
+        },
+        "db": {
+          "xactsPerSec": 480,
+          "cacheHitPct": 100,
+          "blocksReadFromDisk": 758,
+          "tempMB": 0,
+          "deadlocks": 0,
+          "maxActive": 11,
+          "maxConnections": 14
+        }
+      }
+    },
+    {
+      "scenario": "analytics",
+      "concurrency": 16,
+      "durationS": 30,
+      "requests": 10062,
+      "okRate": 1,
+      "rps": 335.1,
+      "p50": 35.7,
+      "p95": 54,
+      "p99": 459.5,
+      "max": 2214.6,
+      "statuses": {
+        "200": 10062
+      },
+      "ops": {
+        "analytics.overview": {
+          "n": 1683,
+          "p50": 35.5,
+          "p95": 55.6
+        },
+        "analytics.sentiment": {
+          "n": 1682,
+          "p50": 35.7,
+          "p95": 54.2
+        },
+        "analytics.topics": {
+          "n": 1677,
+          "p50": 35.9,
+          "p95": 53.5
+        },
+        "analytics.sources": {
+          "n": 1674,
+          "p50": 36.3,
+          "p95": 54.7
+        },
+        "analytics.share-of-voice": {
+          "n": 1674,
+          "p50": 35.6,
+          "p95": 53.8
+        },
+        "analytics.coverage": {
+          "n": 1672,
+          "p50": 35.4,
+          "p95": 52.8
+        }
+      },
+      "resources": {
+        "api": {
+          "cpuPctOfOneCore": 72.1,
+          "rssMaxMB": 290
+        },
+        "worker": {
+          "cpuPctOfOneCore": 0.1,
+          "rssMaxMB": 108
+        },
+        "db": {
+          "xactsPerSec": 950,
+          "cacheHitPct": 99.99,
+          "blocksReadFromDisk": 2234,
+          "tempMB": 0,
+          "deadlocks": 0,
+          "maxActive": 11,
+          "maxConnections": 14
+        }
+      }
+    },
+    {
+      "scenario": "alerts",
+      "concurrency": 16,
+      "durationS": 30,
+      "requests": 16088,
+      "okRate": 1,
+      "rps": 535.9,
+      "p50": 28.8,
+      "p95": 45.4,
+      "p99": 53.1,
+      "max": 68.4,
+      "statuses": {
+        "200": 16088
+      },
+      "ops": {
+        "alert-rules.list": {
+          "n": 8046,
+          "p50": 23.9,
+          "p95": 35
+        },
+        "issues.dashboard": {
+          "n": 8042,
+          "p50": 34.3,
+          "p95": 48.9
+        }
+      },
+      "resources": {
+        "api": {
+          "cpuPctOfOneCore": 81.3,
+          "rssMaxMB": 290
+        },
+        "worker": {
+          "cpuPctOfOneCore": 0.2,
+          "rssMaxMB": 108
+        },
+        "db": {
+          "xactsPerSec": 1541,
+          "cacheHitPct": 99.99,
+          "blocksReadFromDisk": 86,
+          "tempMB": 0,
+          "deadlocks": 0,
+          "maxActive": 5,
+          "maxConnections": 15
+        }
+      }
+    },
+    {
+      "scenario": "mixed.concurrent-tenants",
+      "concurrency": 32,
+      "durationS": 30.1,
+      "requests": 7588,
+      "okRate": 1,
+      "rps": 252,
+      "p50": 104.7,
+      "p95": 160.9,
+      "p99": 804.1,
+      "max": 2226.6,
+      "statuses": {
+        "200": 7588
+      },
+      "ops": {
+        "alert-rules.list": {
+          "n": 965,
+          "p50": 89.7,
+          "p95": 130.3
+        },
+        "mentions.search": {
+          "n": 1901,
+          "p50": 120.3,
+          "p95": 169.1
+        },
+        "analytics.overview": {
+          "n": 637,
+          "p50": 102.8,
+          "p95": 583.3
+        },
+        "analytics.sentiment": {
+          "n": 636,
+          "p50": 102,
+          "p95": 991.2
+        },
+        "issues.dashboard": {
+          "n": 933,
+          "p50": 104.1,
+          "p95": 155
+        },
+        "analytics.topics": {
+          "n": 632,
+          "p50": 101.6,
+          "p95": 304.1
+        },
+        "analytics.sources": {
+          "n": 631,
+          "p50": 102.5,
+          "p95": 304.1
+        },
+        "analytics.share-of-voice": {
+          "n": 629,
+          "p50": 100.7,
+          "p95": 144.1
+        },
+        "analytics.coverage": {
+          "n": 624,
+          "p50": 100.9,
+          "p95": 178.8
+        }
+      },
+      "resources": {
+        "api": {
+          "cpuPctOfOneCore": 55.9,
+          "rssMaxMB": 291
+        },
+        "worker": {
+          "cpuPctOfOneCore": 0.1,
+          "rssMaxMB": 108
+        },
+        "db": {
+          "xactsPerSec": 731,
+          "cacheHitPct": 100,
+          "blocksReadFromDisk": 1115,
+          "tempMB": 0,
+          "deadlocks": 0,
+          "maxActive": 11,
+          "maxConnections": 15
+        }
+      }
+    },
+    {
+      "scenario": "reports.generate",
+      "concurrency": 9,
+      "durationS": 5.9,
+      "requests": 9,
+      "okRate": 1,
+      "rps": 1.5,
+      "p50": 4246,
+      "p95": 5783.1,
+      "p99": 5783.1,
+      "max": 5783.1,
+      "statuses": {
+        "succeeded": 9
+      },
+      "enqueueStatuses": {
+        "202": 9
+      },
+      "enqueueErrors": [],
+      "resources": {
+        "api": {
+          "cpuPctOfOneCore": 2.8,
+          "rssMaxMB": 291
+        },
+        "worker": {
+          "cpuPctOfOneCore": 46.9,
+          "rssMaxMB": 253
+        },
+        "db": {
+          "xactsPerSec": 36,
+          "cacheHitPct": 99.98,
+          "blocksReadFromDisk": 1130,
+          "tempMB": 0,
+          "deadlocks": 0,
+          "maxActive": 3,
+          "maxConnections": 13
+        }
+      }
+    },
+    {
+      "scenario": "ingestion.collect",
+      "concurrency": 6,
+      "durationS": 5.6,
+      "requests": 6,
+      "okRate": 1,
+      "rps": 1.1,
+      "p50": 4479.2,
+      "p95": 5476.1,
+      "p99": 5476.1,
+      "max": 5476.1,
+      "statuses": {
+        "succeeded": 6
+      },
+      "itemsPerFeed": 200,
+      "itemsInserted": 1200,
+      "triggerErrors": [],
+      "resources": {
+        "api": {
+          "cpuPctOfOneCore": 2.2,
+          "rssMaxMB": 291
+        },
+        "worker": {
+          "cpuPctOfOneCore": 52.5,
+          "rssMaxMB": 277
+        },
+        "db": {
+          "xactsPerSec": 345,
+          "cacheHitPct": 99.92,
+          "blocksReadFromDisk": 1597,
+          "tempMB": 0,
+          "deadlocks": 0,
+          "maxActive": 2,
+          "maxConnections": 17
+        }
+      }
+    },
+    {
+      "scenario": "ai.baseline-backfill",
+      "concurrency": 3,
+      "durationS": 4.4,
+      "requests": 1263,
+      "rps": 285.1,
+      "okRate": 1,
+      "statuses": {
+        "tenant0": "202 queued=422",
+        "tenant1": "202 queued=419",
+        "tenant2": "202 queued=422"
+      },
+      "remaining": 0,
+      "resources": {
+        "api": {
+          "cpuPctOfOneCore": 4.2,
+          "rssMaxMB": 292
+        },
+        "worker": {
+          "cpuPctOfOneCore": 30.3,
+          "rssMaxMB": 277
+        },
+        "db": {
+          "xactsPerSec": 513,
+          "cacheHitPct": 99.95,
+          "blocksReadFromDisk": 141,
+          "tempMB": 0,
+          "deadlocks": 0,
+          "maxActive": 3,
+          "maxConnections": 8
+        }
+      }
+    }
+  ],
+  "finishedAt": "2026-10-20T01:03:54.010Z"
+}

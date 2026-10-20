@@ -236,6 +236,18 @@ describe('ingestion pipeline (e2e)', () => {
       expect(seen.total).toBe(3);
       const unmatched = (await http().get(`/api/v1/organizations/${org}/mentions?q=anggaran`).set('Cookie', owner.cookie)).body.items[0];
       await http().get(`/api/v1/organizations/${org}/mentions/${unmatched.id}`).set('Cookie', analyst.cookie).expect(404);
+      // Paging (ids paged first, rows built per page) returns the same order and total as one unpaged request, per role.
+      for (const u of [owner, analyst]) {
+        const full = (await http().get(`/api/v1/organizations/${org}/mentions?limit=100`).set('Cookie', u.cookie).expect(200)).body;
+        const paged: string[] = [];
+        for (let off = 0; off < full.total; off += 2) {
+          const pg = (await http().get(`/api/v1/organizations/${org}/mentions?limit=2&offset=${off}`).set('Cookie', u.cookie).expect(200)).body;
+          expect(pg.total).toBe(full.total);
+          paged.push(...pg.items.map((m: { id: string }) => m.id));
+        }
+        expect(paged).toEqual(full.items.map((m: { id: string }) => m.id));
+        expect((await http().get(`/api/v1/organizations/${org}/mentions?limit=2&offset=${full.total}`).set('Cookie', u.cookie).expect(200)).body).toMatchObject({ items: [], total: 0 });
+      }
     });
 
     it('another tenant cannot see or touch this tenant\'s sources, runs or mentions', async () => {

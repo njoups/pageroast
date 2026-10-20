@@ -76,14 +76,18 @@ export class MentionsService {
       const order = f.sort === 'relevance' && f.q ? `${rank} DESC, m.discovered_at DESC`
         : f.sort === 'discovered' ? 'm.discovered_at DESC' : 'm.published_at DESC NULLS LAST, m.discovered_at DESC';
       const limit = f.limit ?? 25; const offset = f.offset ?? 0;
+      // Page the ids first, then build full rows (sentiment, topics, matches) for that page only: deep offsets stay cheap.
       const rows = (await c.query(
-        `SELECT ${ITEM_COLS}, count(*) OVER() AS total,
+        `WITH page AS (
+           SELECT m.id, count(*) OVER() AS total, row_number() OVER (ORDER BY ${order}) AS rn
+           FROM mentions m ${where.length ? `WHERE ${where.join(' AND ')}` : ''}
+           ORDER BY ${order} LIMIT ${add(limit)} OFFSET ${add(offset)})
+         SELECT ${ITEM_COLS}, page.total,
            coalesce((SELECT jsonb_agg(jsonb_build_object('projectId', mm.project_id, 'projectName', pr.name, 'queryId', mm.query_id, 'queryName', q.name, 'terms', mm.matched_terms))
              FROM mention_matches mm JOIN projects pr ON pr.id = mm.project_id JOIN monitoring_queries q ON q.id = mm.query_id
              WHERE mm.mention_id = m.id ${all ? '' : `AND EXISTS (SELECT 1 FROM project_members pm2 WHERE pm2.project_id = mm.project_id AND pm2.user_id = ${add(auth.userId)})`}), '[]'::jsonb) AS matches
-         FROM mentions m JOIN sources s ON s.id = m.source_id
-         ${where.length ? `WHERE ${where.join(' AND ')}` : ''}
-         ORDER BY ${order} LIMIT ${add(limit)} OFFSET ${add(offset)}`, p)).rows;
+         FROM page JOIN mentions m ON m.id = page.id JOIN sources s ON s.id = m.source_id
+         ORDER BY page.rn`, p)).rows;
       const total = rows[0] ? Number(rows[0].total) : 0;
       return { items: rows.map(({ total: _t, ...r }) => ({ ...r, dataOrigin: 'live' })), total, limit, offset };
     });
