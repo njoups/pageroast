@@ -1,0 +1,118 @@
+name: civicsignal-deploy
+
+# Manual deployments only: nothing here runs on push. Production requires
+#   1. a commit that is on main and passed civicsignal-ci,
+#   2. approval by a required reviewer of the GitHub environment "production" (Settings → Environments),
+# and every deployment ends with a readiness check. Procedure and rollback: civicsignal/docs/DEPLOYMENT.md.
+on:
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: Target environment
+        type: choice
+        options: [staging, production]
+        required: true
+      sha:
+        description: Full commit SHA to deploy (must have passed civicsignal-ci)
+        type: string
+        required: true
+
+permissions:
+  contents: read
+
+concurrency:
+  group: civicsignal-deploy-${{ inputs.environment }}
+  cancel-in-progress: false
+
+jobs:
+  gate:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      actions: read
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Commit is valid, on main (production), and passed CI
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SHA: ${{ inputs.sha }}
+          TARGET: ${{ inputs.environment }}
+        run: |
+          [[ "$SHA" =~ ^[0-9a-f]{40}$ ]] || { echo "::error::sha must be a full 40-character commit SHA"; exit 1; }
+          git cat-file -e "$SHA^{commit}"
+          if [ "$TARGET" = production ]; then
+            git merge-base --is-ancestor "$SHA" origin/main || { echo "::error::production deploys only commits that are on main"; exit 1; }
+          fi
+          ok=$(gh api "repos/$GITHUB_REPOSITORY/actions/workflows/civicsignal-ci.yml/runs?head_sha=$SHA&status=success" --jq '.total_count')
+          [ "$ok" -gt 0 ] || { echo "::error::civicsignal-ci has not passed for $SHA"; exit 1; }
+
+  images:
+    needs: gate
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    outputs:
+      api: ${{ steps.push.outputs.api }}
+      web: ${{ steps.push.outputs.web }}
+    defaults:
+      run:
+        working-directory: civicsignal
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.sha }}
+      - name: Build and push images tagged with the commit SHA; deploy by digest
+        id: push
+        env:
+          SHA: ${{ inputs.sha }}
+          GHCR_TOKEN: ${{ github.token }}
+        run: |
+          registry="ghcr.io/${GITHUB_REPOSITORY_OWNER,,}"
+          echo "$GHCR_TOKEN" | docker login ghcr.io -u "$GITHUB_ACTOR" --password-stdin
+          for img in api web; do
+            docker build -f "apps/$img/Dockerfile" -t "$registry/civicsignal-$img:$SHA" .
+            docker push -q "$registry/civicsignal-$img:$SHA"
+            digest=$(docker inspect --format '{{index .RepoDigests 0}}' "$registry/civicsignal-$img:$SHA")
+            echo "$img=$digest" >> "$GITHUB_OUTPUT"
+            echo "$img → $digest" >> "$GITHUB_STEP_SUMMARY"
+          done
+
+  deploy:
+    needs: images
+    runs-on: ubuntu-latest
+    # Approval gate: configure required reviewers (and for production, "prevent self-review") on this environment.
+    environment: ${{ inputs.environment }}
+    steps:
+      - name: Hand the image digests to the environment's deployment agent
+        # The agent (operated in the target network, see docs/DEPLOYMENT.md) pulls by digest, runs the migrate service,
+        # restarts api/worker/web and keeps the previous digests for rollback. Nothing is deployed when it is not configured.
+        env:
+          HOOK_URL: ${{ secrets.DEPLOY_HOOK_URL }}
+          HOOK_TOKEN: ${{ secrets.DEPLOY_HOOK_TOKEN }}
+          API_IMAGE: ${{ needs.images.outputs.api }}
+          WEB_IMAGE: ${{ needs.images.outputs.web }}
+          SHA: ${{ inputs.sha }}
+        run: |
+          if [ -z "$HOOK_URL" ] || [ -z "$HOOK_TOKEN" ]; then
+            echo "::error::No deployment target is configured for '${{ inputs.environment }}' (DEPLOY_HOOK_URL / DEPLOY_HOOK_TOKEN environment secrets). Nothing was deployed."
+            exit 1
+          fi
+          body=$(jq -n --arg api "$API_IMAGE" --arg web "$WEB_IMAGE" --arg sha "$SHA" --arg by "$GITHUB_ACTOR" --arg run "$GITHUB_RUN_ID" \
+            '{apiImage:$api, webImage:$web, commit:$sha, requestedBy:$by, runId:$run, migrate:true}')
+          curl --fail-with-body -sS -X POST "$HOOK_URL" -H "Authorization: Bearer $HOOK_TOKEN" -H 'Content-Type: application/json' -d "$body"
+      - name: Post-deployment readiness check
+        env:
+          BASE_URL: ${{ vars.PUBLIC_BASE_URL }}
+        run: |
+          [ -n "$BASE_URL" ] || { echo "::error::set the PUBLIC_BASE_URL variable on the environment"; exit 1; }
+          for i in $(seq 1 30); do
+            if curl -fsS --max-time 5 "$BASE_URL/health/ready" | jq -e '.status == "ok"' >/dev/null; then
+              echo "ready after $((i * 10))s"; curl -fsS --max-time 5 "$BASE_URL/health/live" >/dev/null; exit 0
+            fi
+            sleep 10
+          done
+          echo "::error::$BASE_URL/health/ready did not report ok within 5 minutes. Roll back: docs/DEPLOYMENT.md#rollback"
+          exit 1

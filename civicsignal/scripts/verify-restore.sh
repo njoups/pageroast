@@ -4,9 +4,10 @@
 # Checks (any failure exits non-zero):
 #   1. checksum of the dump and manifest;
 #   2. restore into a fresh database (never into an existing one);
-#   3. migrations: same set as the manifest; schema re-grants applied by restore.sh;
+#   3. migrations: every migration in the manifest is present (newer ones applied by restore.sh are listed);
 #   4. rows: exact per-table counts equal to the manifest;
-#   5. security: forced RLS on every table, the application role is not superuser/BYPASSRLS and owns nothing;
+#   5. security: forced RLS on every table, the application role is not superuser/BYPASSRLS and owns nothing, and its
+#      table/column/function privileges equal the manifest (a restore must not widen them);
 #   6. audit: every hash chain verifies (audit_verify_chain) and matches its stored head.
 # The scratch database is dropped at the end unless KEEP_RESTORE_DB=1. Prints counts and verdicts, never data.
 set -euo pipefail
@@ -30,7 +31,11 @@ trap 'cleanup; [ "$dump" != "$file" ] && rm -f "$dump"' EXIT
 TARGET_DATABASE_URL="$target" APP_DB_PASSWORD="${APP_DB_PASSWORD:-restore-drill-$RANDOM$RANDOM}" bash "$dir/scripts/restore.sh" "$dump" >/dev/null
 
 echo "[3/6] migrations"
-diff <(grep '^migration ' "$base.manifest") <(psql "$target" -X -At -c "SELECT 'migration ' || version FROM schema_migrations ORDER BY version") && echo "  migrations match manifest"
+restored_migrations="$(psql "$target" -X -At -c "SELECT 'migration ' || version FROM schema_migrations ORDER BY version")"
+missing="$(comm -23 <(grep '^migration ' "$base.manifest" | sort) <(echo "$restored_migrations" | sort))"
+[ -z "$missing" ] || { echo "restore drill: migrations in the backup are missing after restore:" >&2; echo "$missing" >&2; exit 1; }
+newer="$(comm -13 <(grep '^migration ' "$base.manifest" | sort) <(echo "$restored_migrations" | sort) | sed 's/^migration //' | paste -sd, -)"
+echo "  all $(grep -c '^migration ' "$base.manifest") backed-up migrations present${newer:+; applied after restore: $newer}"
 
 echo "[4/6] row counts"
 actual="$(psql "$target" -X -q -At <<'SQL'
@@ -54,6 +59,9 @@ BEGIN
 END $$;
 SELECT '  forced RLS on all tables; app role restricted';
 SQL
+diff <(grep '^acl' "$base.manifest") <(cd "$dir" && psql "$target" -X -q -At -v ON_ERROR_STOP=1 -f scripts/sql/app-privileges.sql) \
+  || { echo "restore drill: application role privileges differ from the backup (lines above)" >&2; exit 1; }
+echo "  app role privileges identical to manifest ($(grep -c '^acl' "$base.manifest") objects)"
 
 echo "[6/6] audit hash chains"
 psql "$target" -X -q -At -v ON_ERROR_STOP=1 <<'SQL'

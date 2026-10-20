@@ -14,7 +14,21 @@ defaults:
     working-directory: civicsignal
 
 jobs:
+  # Stage 1: secrets and supply chain. Fails fast, before any dependency code runs.
+  secrets:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0 # the history scan needs every commit: a secret removed later still has to be rotated
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Secret scan (tree and history; prints rule and location, never the value)
+        run: node scripts/scan-secrets.mjs --history
+
   verify:
+    needs: secrets
     runs-on: ubuntu-latest
     services:
       postgres:
@@ -40,14 +54,51 @@ jobs:
           node-version: 22
           cache: npm
           cache-dependency-path: civicsignal/package-lock.json
-      - run: npm ci
+      - name: Install from the lockfile (fails if package.json and package-lock.json disagree)
+        run: npm ci
       - name: Lint
         run: npm run lint
       - name: Type check
         run: npm run typecheck
-      - name: Tests (unit, migrations, RLS, e2e, ingestion, queue; Postgres 16 + Redis 7)
+      - name: Tests (unit, migrations, RLS, security, e2e, ingestion, queue; Postgres 16 + Redis 7)
         run: npm test
       - name: Build
         run: npm run build
       - name: Dependency audit (production deps)
         run: npm audit --omit=dev --audit-level=high
+      - name: License review (production deps)
+        run: node scripts/check-licenses.mjs
+      - name: PostgreSQL 16 client tools
+        working-directory: .
+        run: |
+          if ! pg_dump --version 2>/dev/null | grep -q ' 16\.'; then
+            sudo apt-get update -qq && sudo apt-get install -y -qq postgresql-client-16
+            echo /usr/lib/postgresql/16/bin >> "$GITHUB_PATH"
+          fi
+      - name: Migrations apply to an empty database, then backup + restore drill
+        env:
+          PGPASSWORD: postgres
+          APP_DB_PASSWORD: ci-only-app-password
+        run: |
+          psql -h localhost -U postgres -X -q -c "CREATE DATABASE civicsignal_ci_drill"
+          MIGRATION_DATABASE_URL=postgres://postgres:postgres@localhost:5432/civicsignal_ci_drill npm run -s migrate
+          MIGRATION_DATABASE_URL=postgres://postgres:postgres@localhost:5432/civicsignal_ci_drill bash scripts/backup.sh "$RUNNER_TEMP/ci.dump" 2>/dev/null
+          ADMIN_DATABASE_URL=postgres://postgres:postgres@localhost:5432/postgres bash scripts/verify-restore.sh "$RUNNER_TEMP/ci.dump"
+
+  # Stage 3: container images. Built from the reviewed Dockerfiles and scanned; not pushed (see civicsignal-deploy.yml).
+  containers:
+    needs: verify
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        image: [api, web]
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build ${{ matrix.image }} image
+        run: docker build -f apps/${{ matrix.image }}/Dockerfile -t civicsignal-${{ matrix.image }}:ci .
+      - name: Vulnerability scan (OS packages and node_modules; fails on fixable HIGH/CRITICAL)
+        # Trivy runs from its container image at a pinned version. Pin by digest once your registry policy is set
+        # (docs/SUPPLY_CHAIN.md); findings without a fix are reported but do not fail the build.
+        run: |
+          docker run --rm -v /var/run/docker.sock:/var/run/docker.sock aquasec/trivy:0.56.2 image \
+            --scanners vuln --severity HIGH,CRITICAL --ignore-unfixed --exit-code 1 --no-progress civicsignal-${{ matrix.image }}:ci

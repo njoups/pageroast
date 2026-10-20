@@ -8,7 +8,9 @@ set -euo pipefail
 : "${MIGRATION_DATABASE_URL:?set MIGRATION_DATABASE_URL to the owner connection string}"
 out="${1:-backup-$(date -u +%Y%m%dT%H%M%SZ).dump}"
 umask 077
-pg_dump --format=custom --no-owner --no-privileges --file "$out" "$MIGRATION_DATABASE_URL"
+# Privileges are kept: the application role's table, column and function grants are part of the security model and are
+# restored exactly (scripts/restore.sh); ownership is not (the restoring owner role owns the objects).
+pg_dump --format=custom --no-owner --file "$out" "$MIGRATION_DATABASE_URL"
 # Manifest: exact row counts per table and applied migrations, used by verify-restore.sh to prove a restore is complete.
 psql "$MIGRATION_DATABASE_URL" -X -q -At -v ON_ERROR_STOP=1 <<'SQL' > "$out.manifest"
 SET row_security = off;
@@ -16,6 +18,7 @@ SELECT 'migration ' || version FROM schema_migrations ORDER BY version;
 SELECT format('rows %s %s', c.relname, (xpath('/row/n/text()', query_to_xml(format('SELECT count(*) AS n FROM public.%I', c.relname), false, true, '')))[1]::text)
 FROM pg_class c WHERE c.relnamespace = 'public'::regnamespace AND c.relkind = 'r' ORDER BY c.relname;
 SQL
+psql "$MIGRATION_DATABASE_URL" -X -q -At -v ON_ERROR_STOP=1 -f "$(dirname "$0")/sql/app-privileges.sql" >> "$out.manifest"
 sha256sum "$out" "$out.manifest" > "$out.sha256"
 if [ -n "${BACKUP_GPG_RECIPIENT:-}" ]; then
   gpg --batch --yes --trust-model always --recipient "$BACKUP_GPG_RECIPIENT" --output "$out.gpg" --encrypt "$out"

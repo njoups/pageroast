@@ -1,0 +1,16 @@
+# Keep the build context to source and lockfiles: dependencies are installed by `npm ci` inside the image (never copied
+# from the host), and local secrets, dumps and build output never reach the Docker daemon or an image layer.
+**/node_modules
+**/dist
+**/.next
+**/coverage
+**/*.tsbuildinfo
+.git
+.env
+.env.*
+!.env.example
+**/*.dump
+**/*.dump.*
+**/*.gpg
+backups
+docs/load-results
