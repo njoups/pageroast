@@ -31,16 +31,24 @@ import { ProjectsService } from './projects/projects.service';
 import { SocialAnalyticsService } from './social/social-analytics';
 import { SocialController } from './social/social.controller';
 import { SocialService } from './social/social.service';
+import { AppConfig, CONFIG } from './config';
+import { BillingController, BillingService } from './commercial/billing-api';
+import { BILLING_PROVIDER, createBillingProvider } from './commercial/billing-provider';
+import { PlatformCommercialController, PlatformCommercialService } from './commercial/platform-commercial';
+import { BillingWebhookController, BillingWebhookService } from './commercial/webhooks';
 
 @Module({
   imports: [DatabaseModule, IngestionCoreModule, AlertsCoreModule, ReportsCoreModule],
   controllers: [AuthController, OrganizationsController, InvitationsController, ProjectsController, AuditController, HealthController, PlatformController,
-    SourcesController, QueriesController, MentionsController, AnalysisController, IssuesController, AlertRulesController, AnalyticsController, ReportsController, GovernanceController, SocialController],
+    SourcesController, QueriesController, MentionsController, AnalysisController, IssuesController, AlertRulesController, AnalyticsController, ReportsController, GovernanceController, SocialController,
+    BillingController, PlatformCommercialController, BillingWebhookController],
   providers: [
     { provide: IDENTITY_PROVIDER, useClass: LocalIdentityProvider },
     AuditService, OrganizationsService, ProjectsService, SessionGuard, TenantGuard, RateLimitGuard, FailureThrottle, CounterStore,
     SourcesService, QueriesService, MentionsService, AnalysisApiService, IssuesService, RulesService, AnalyticsService, ReportsService, GovernanceService, RetentionService,
     SocialService, SocialAnalyticsService,
+    { provide: BILLING_PROVIDER, inject: [CONFIG], useFactory: (c: AppConfig) => createBillingProvider(c.billing, c.appBaseUrl) },
+    BillingService, PlatformCommercialService, BillingWebhookService,
   ],
 })
 export class AppModule {}

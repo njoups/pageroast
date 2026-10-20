@@ -16,6 +16,7 @@ export async function createApp(opts: { logger?: false } = {}): Promise<INestApp
   const app = await NestFactory.create<NestExpressApplication>(AppModule, {
     logger: opts.logger ?? ['error', 'warn', 'log'],
     bodyParser: false, // JSON only: form-encoded (classic CSRF) bodies are never parsed
+    rawBody: true,     // kept for billing webhook signature verification (req.rawBody)
   });
   const config = app.get<AppConfig>(CONFIG);
   if (config.trustProxy) app.set('trust proxy', 1);

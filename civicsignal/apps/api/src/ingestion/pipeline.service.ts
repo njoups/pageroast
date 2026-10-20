@@ -1,6 +1,8 @@
+import { randomUUID } from 'node:crypto';
 import { Inject, Injectable, Optional } from '@nestjs/common';
 import { AnalysisEnqueuer } from '../analysis/analysis-queue';
 import type { PoolClient } from 'pg';
+import { collectionGate, consume, loadEntitlements } from '../commercial/quota';
 import { AppConfig, CONFIG } from '../config';
 import { Database } from '../database/database.service';
 import { ConnectorError, type FetchResult, type RawRecord } from './connectors/connector';
@@ -25,7 +27,8 @@ export interface CollectJob { tenantId: string; sourceId: string; trigger: Trigg
 export interface RunCounts { seen: number; new: number; known: number; duplicate: number; rejected: number; matches: number }
 export type RunOutcome =
   | { status: 'succeeded'; runId: string; counts: RunCounts; notModified: boolean; skippedForCache: boolean }
-  | { status: 'already_succeeded' | 'skipped_disabled' | 'skipped_paused'; runId: string | null };
+  | { status: 'already_succeeded' | 'skipped_disabled' | 'skipped_paused'; runId: string | null }
+  | { status: 'skipped_commercial'; runId: string | null; reason: string };
 
 interface SourceRow {
   id: string; name: string; enabled: boolean; authorization_status: string; authorization_basis: string | null;
@@ -85,6 +88,14 @@ export class IngestionPipeline {
       if (job.trigger === 'schedule' && !src.enabled) return { kind: 'disabled' as const };
       // Paused social connectors (provider quota exhausted, budget limit) skip scheduled runs without recording a failure.
       if (job.trigger === 'schedule' && src.paused_until && src.paused_until.getTime() > Date.now()) return { kind: 'paused' as const };
+      // Plan status and quotas: new collection pauses; nothing already collected is touched. A queued manual/retry run
+      // is closed with the reason so the user sees why it did not run.
+      const gate = await collectionGate(c, await loadEntitlements(c, job.tenantId), isSocialKind(src.kind));
+      if (gate) {
+        const closed = await c.query<{ id: string }>(`UPDATE connector_runs SET status = 'failed', finished_at = now(), error = $3 WHERE connector_id = $1 AND idempotency_key = $2 AND status = 'queued' RETURNING id`,
+          [src.connector_id, job.idempotencyKey, JSON.stringify({ kind: 'plan_limit', message: gate, retryable: false })]);
+        return { kind: 'commercial' as const, reason: gate, runId: closed.rows[0]?.id ?? null };
+      }
       const r = await c.query<{ id: string }>(
         `INSERT INTO connector_runs (tenant_id, connector_id, source_id, idempotency_key, status, attempt, trigger, requested_by, started_at)
          VALUES ($1,$2,$3,$4,'running',$5,$6,$7, now())
@@ -98,6 +109,10 @@ export class IngestionPipeline {
     if (prep.kind === 'missing') throw new ConnectorError('not_found', 'Source no longer exists');
     if (prep.kind === 'disabled') return { status: 'skipped_disabled', runId: null };
     if (prep.kind === 'paused') return { status: 'skipped_paused', runId: null };
+    if (prep.kind === 'commercial') {
+      logEvent('info', 'ingestion.skipped_commercial', { tenantId: job.tenantId, sourceId: job.sourceId, trigger: job.trigger, reason: prep.reason });
+      return { status: 'skipped_commercial', runId: prep.runId, reason: prep.reason };
+    }
     if (prep.kind === 'done') return { status: 'already_succeeded', runId: null };
     const { src, runId } = prep;
     const log = { tenantId: job.tenantId, sourceId: src.id, runId, attempt, trigger: job.trigger, kind: src.kind };
@@ -208,9 +223,11 @@ export class IngestionPipeline {
     });
   }
 
-  private recordUsage(c: PoolClient, tenantId: string, metric: string, qty: number, sourceId: string) {
-    return c.query(`INSERT INTO usage_records (tenant_id, metric, quantity, period_start, metadata) VALUES ($1,$2,$3,current_date,$4)`,
-      [tenantId, metric, qty, JSON.stringify({ sourceId })]);
+  /** Operational counters (not plan quotas): one ledger row per run and metric, so a redelivered job counts once. */
+  private recordUsage(c: PoolClient, tenantId: string, metric: string, qty: number, sourceId: string, runId?: string) {
+    return c.query(`INSERT INTO usage_records (tenant_id, metric, quantity, period_start, metadata, idempotency_key, source, measurement, occurred_at)
+      VALUES ($1,$2,$3,current_date,$4,$5,'ingestion','confirmed',now()) ON CONFLICT (tenant_id, metric, idempotency_key) DO NOTHING`,
+      [tenantId, metric, qty, JSON.stringify({ sourceId }), runId ? `connector_run:${runId}` : `op:${randomUUID()}`]);
   }
 
   private async persist(job: CollectJob, src: SourceRow, runId: string, fetched: FetchResult, fetchMs: number, skippedForCache: boolean): Promise<{ counts: RunCounts; newOriginals: string[] }> {
@@ -373,11 +390,13 @@ export class IngestionPipeline {
         `UPDATE connectors SET http_etag = $2, http_last_modified = $3, cache_valid_until = $4,
            status = 'configured', verified_at = CASE WHEN $5 THEN now() ELSE verified_at END WHERE id = $1`,
         [src.connector_id, fetched.cache.etag, fetched.cache.lastModified, fetched.cache.validUntil, verifiedNow]);
-      if (!skippedForCache) await this.recordUsage(c, job.tenantId, 'connector_requests', 1, src.id);
-      if (social) await recordProviderUsage(c, { tenantId: job.tenantId, connectorId: src.connector_id, kind: src.kind, usage: fetched.usage, retrieved: fetched.records.length, rejected: fetched.rejected.length });
+      if (!skippedForCache) await this.recordUsage(c, job.tenantId, 'connector_requests', 1, src.id, runId);
+      if (social) await recordProviderUsage(c, { tenantId: job.tenantId, connectorId: src.connector_id, kind: src.kind, usage: fetched.usage, retrieved: fetched.records.length, rejected: fetched.rejected.length, eventKey: `connector_run:${runId}` });
       // A successful sync ends an expired pause.
       if (social && src.paused_until && src.paused_until <= new Date()) await c.query('UPDATE connectors SET paused_until = NULL, paused_reason = NULL WHERE id = $1', [src.connector_id]);
-      if (counts.new) await this.recordUsage(c, job.tenantId, 'records_collected', counts.new, src.id);
+      if (counts.new) await this.recordUsage(c, job.tenantId, 'records_collected', counts.new, src.id, runId);
+      // Plan metering: what was fetched is always stored and counted (overage if the run crossed the limit).
+      if (counts.new) await consume(c, job.tenantId, { metric: 'mentions_ingested', quantity: counts.new, idempotencyKey: `connector_run:${runId}`, source: social ? 'social_ingestion' : 'ingestion', metadata: { sourceId: src.id } });
       stages.metrics = 'ok';
       await c.query(
         `UPDATE connector_runs SET status = 'succeeded', finished_at = now(), duration_ms = $2, http_status = $3, not_modified = $4,

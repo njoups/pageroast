@@ -14,6 +14,7 @@ import { sanitizeArticleAnalysis, type ArticleAnalysis, type SanitizeReport } fr
 import { TAXONOMY_VERSION, TOPIC_KEYS, type CustomTopic } from './taxonomy';
 import { normalizeName } from './text';
 import { quotaState, recordAiUsage } from './usage';
+import { consume } from '../commercial/quota';
 
 export const PIPELINE_VERSION = 'ai-pipeline/2';   // /2: language detector lexical-profile/2 (headline vocabulary)
 const SYS = '00000000-0000-0000-0000-000000000000';
@@ -86,6 +87,13 @@ export class AnalysisService {
     const record = { category: (m.platform ? 'social' : 'news') as 'news' | 'social', platform: m.platform, contentType: m.content_type };
 
     // Quotas are checked when work starts (the authoritative moment), not only at enqueue time.
+    if (q.analysisBlocked) {
+      await this.finish(tenantId, analysisId, m.id, 'quota_exceeded', { stages: { quota: q.analysisBlocked } });
+      return { outcome: 'quota_exceeded' };
+    }
+    // The plan's LLM entitlement (feature or token quota) only switches the method to the rule-based baseline; the
+    // tenant's own monthly token cap keeps its existing behaviour (quota_exceeded).
+    const planBaseline = this.provider.method !== 'baseline' && q.llmBlocked !== null;
     if (q.analysesToday >= q.dailyMentionLimit || (this.provider.method !== 'baseline' && q.tokensThisMonth >= q.monthlyTokenLimit)) {
       await this.finish(tenantId, analysisId, m.id, 'quota_exceeded', { stages: { quota: q.analysesToday >= q.dailyMentionLimit ? 'daily_mention_limit_reached' : 'monthly_token_limit_reached' } });
       return { outcome: 'quota_exceeded' };
@@ -111,9 +119,9 @@ export class AnalysisService {
     stages.validate = contentStatus;
 
     // 3–6. Entities, topics, sentiment, summary (one structured provider call)
-    let result: ProviderResult<ArticleAnalysis>; let used = this.provider; let fallbackReason: string | null = null;
+    let result: ProviderResult<ArticleAnalysis>; let used = planBaseline ? this.fallback : this.provider; let fallbackReason: string | null = planBaseline ? `plan: ${q.llmBlocked}` : null;
     try {
-      result = await this.provider.analyzeArticle({ title: m.title, excerpt, body: m.body, publisher: m.publisher, language: lang.language, customTopics: custom, record });
+      result = await used.analyzeArticle({ title: m.title, excerpt, body: m.body, publisher: m.publisher, language: lang.language, customTopics: custom, record });
     } catch (e) {
       const err = e instanceof ProviderError ? e : new ProviderError('network', (e as Error).message);
       if (err.retryable && !isFinalAttempt) {
@@ -133,6 +141,7 @@ export class AnalysisService {
       logEvent('warn', 'analysis.fallback_used', { tenantId, analysisId, reason: err.kind });
     }
     stages.provider = fallbackReason ? `fallback:${used.name}` : used.name;
+    if (planBaseline) stages.plan = q.llmBlocked!;
 
     // Output is untrusted: verify every quote against the source text, drop what cannot be verified.
     const allowedTopics = new Set([...TOPIC_KEYS, ...custom.map((t) => t.key)]);
@@ -258,8 +267,7 @@ export class AnalysisService {
         `UPDATE mentions SET processing_status = $2, detected_language = coalesce($3, detected_language), language_confidence = $4, language_method = coalesce($5, language_method),
            analysis_id = CASE WHEN $6 THEN $7::uuid ELSE analysis_id END, analyzed_at = CASE WHEN $6 THEN now() ELSE analyzed_at END WHERE id = $1`,
         [mentionId, mentionStatus, d.lang?.language ?? null, d.lang?.confidence ?? null, d.lang?.method ?? null, current, analysisId]);
-      if (current) await c.query(`INSERT INTO usage_records (tenant_id, metric, quantity, period_start, metadata) VALUES ($1,'ai_analyses',1,current_date,$2)`,
-        [tenantId, JSON.stringify({ method: d.provider?.method ?? null })]);
+      if (current) await consume(c, tenantId, { metric: 'ai_analyses', quantity: 1, idempotencyKey: `analysis:${analysisId}`, source: d.provider?.method === 'baseline' ? 'baseline' : 'llm', metadata: { method: d.provider?.method ?? null } });
     };
     if (client) return work(client);
     return this.db.withTenant(tenantId, SYS, work);

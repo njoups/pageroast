@@ -2,6 +2,7 @@ import { Inject, Injectable } from '@nestjs/common';
 import type { PoolClient } from 'pg';
 import { AppConfig, CONFIG } from '../config';
 import { Database } from '../database/database.service';
+import { loadEntitlements } from '../commercial/quota';
 import { REDIS } from '../ingestion/ingestion-core.module';
 import { logEvent } from '../ingestion/log';
 import { KEY_PREFIX, type Redis } from '../ingestion/queue';
@@ -125,6 +126,7 @@ export class NotificationService {
     const created: string[] = [];
     const channels: Channel[] = [...new Set<Channel>(['in_app', ...cfg.notify.channels])];
     const quiet = cfg.quietHours && inQuietHours(now, cfg.quietHours) && !(issue.severity === 'critical' && cfg.quietHours.allowCritical);
+    const whatsappInPlan = channels.includes('whatsapp') ? (await loadEntitlements(c, issue.tenant_id)).features.whatsapp : true;
     for (const userId of users) {
       for (const ch of channels) {
         const p = prefs.find((x) => x.user_id === userId && x.channel === ch);
@@ -134,6 +136,7 @@ export class NotificationService {
         let status = ch === 'in_app' ? 'delivered' : 'pending'; let error: string | null = null; let notBefore: Date | null = null;
         if (budget <= 0) { status = 'suppressed'; error = 'Organization daily notification limit reached'; }
         else if (ch === 'email' && !this.email.configured) { status = 'unconfigured'; error = 'Email is not configured on this server'; }
+        else if (ch === 'whatsapp' && !whatsappInPlan) { status = 'suppressed'; error = 'WhatsApp notifications are not included in the plan'; }
         else if (ch === 'whatsapp' && !this.whatsapp.configured) { status = 'unconfigured'; error = 'WhatsApp is not configured on this server'; }
         else if (ch === 'whatsapp' && !p?.destination) { status = 'suppressed'; error = 'No opted-in WhatsApp number for this user'; }
         else if (ch !== 'in_app' && quiet) { status = 'deferred'; notBefore = quietHoursEnd(now, cfg.quietHours!); }

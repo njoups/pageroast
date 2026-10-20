@@ -1,4 +1,6 @@
 import type { PoolClient } from 'pg';
+import { randomUUID } from 'node:crypto';
+import { consume } from '../commercial/quota';
 import type { UsageReport } from '../ingestion/connectors/connector';
 import { youtubeQuotaDay } from '../ingestion/connectors/youtube.connector';
 import { providerForKind } from './providers';
@@ -17,7 +19,7 @@ export function providerDay(kind: string, now = new Date()): { day: string; rese
   return { day: now.toISOString().slice(0, 10), resetsAt: null };
 }
 
-export async function recordProviderUsage(c: PoolClient, x: { tenantId: string; connectorId: string; kind: string; usage: UsageReport | undefined; retrieved?: number; rejected?: number; now?: Date }) {
+export async function recordProviderUsage(c: PoolClient, x: { tenantId: string; connectorId: string; kind: string; usage: UsageReport | undefined; retrieved?: number; rejected?: number; now?: Date; eventKey?: string }) {
   const provider = providerForKind(x.kind)?.provider ?? x.kind;
   const { day } = providerDay(x.kind, x.now);
   const buckets = Object.entries(x.usage?.buckets ?? {});
@@ -35,6 +37,9 @@ export async function recordProviderUsage(c: PoolClient, x: { tenantId: string; 
       [x.tenantId, x.connectorId, provider, day, bucket, b.requests, b.units, first ? x.retrieved ?? 0 : 0, first ? x.rejected ?? 0 : 0, first ? x.usage?.rateLimited ?? 0 : 0]);
     first = false;
   }
+  // Plan metering of provider quota units (recorded, never enforced here: the units were already spent).
+  const units = buckets.reduce((a, [, b]) => a + (b.units ?? 0), 0);
+  if (units > 0) await consume(c, x.tenantId, { metric: 'social_api_units', quantity: units, idempotencyKey: x.eventKey ?? `provider_usage:${randomUUID()}`, source: provider, occurredAt: x.now, metadata: { connectorId: x.connectorId } });
 }
 
 /** Quota limits per bucket: connector config overrides (approved extensions) else the provider's documented defaults. */

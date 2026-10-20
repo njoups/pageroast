@@ -11,6 +11,7 @@ import { AppError, badRequest, conflict, notFound } from '../common/errors';
 import { Auth, AuthContext, Meta, RequestMeta, Tenant, TenantContext } from '../common/request';
 import { AppConfig, CONFIG } from '../config';
 import { Database } from '../database/database.service';
+import { requireCapacity } from '../commercial/quota';
 import { REDIS } from '../ingestion/ingestion-core.module';
 import { KEY_PREFIX, type Redis } from '../ingestion/queue';
 import { SafeHttpClient } from '../ingestion/safe-http';
@@ -143,6 +144,7 @@ export class RulesService {
       const cfg = await this.validate(c, dto.ruleType, dto.projectId, dto.config ?? {});
       const owner = dto.ownerUserId ?? auth.userId;
       if (dto.ownerUserId) await this.assertOwner(c, dto.projectId, dto.ownerUserId);
+      if (dto.isActive ?? true) await requireCapacity(c, t.orgId, 'alert_rules');
       const r = (await c.query<{ id: string }>(`INSERT INTO alert_rules (tenant_id, project_id, name, rule_type, is_active, owner_user_id, created_by, created_at, updated_at)
         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$8) RETURNING id`, [t.orgId, dto.projectId, dto.name, dto.ruleType, dto.isActive ?? true, owner, auth.userId, this.clock.now()])).rows[0]!;
       await c.query(`INSERT INTO alert_rule_versions (tenant_id, rule_id, version, config, config_sha256, created_by, created_at) VALUES ($1,$2,1,$3,$4,$5,$6)`,
@@ -177,6 +179,7 @@ export class RulesService {
         }
       }
       if (dto.ownerUserId) await this.assertOwner(c, r.project_id, dto.ownerUserId);
+      if (dto.isActive === true && !r.is_active) await requireCapacity(c, t.orgId, 'alert_rules');
       await c.query(`UPDATE alert_rules SET name = coalesce($2, name), is_active = coalesce($3, is_active), owner_user_id = CASE WHEN $4 THEN $5::uuid ELSE owner_user_id END,
         current_version = $6, updated_at = $7 WHERE id = $1`, [id, dto.name ?? null, dto.isActive ?? null, dto.ownerUserId !== undefined, dto.ownerUserId ?? null, version, this.clock.now()]);
       await this.audit.record(c, { tenantId: t.orgId, actorUserId: auth.userId, action: 'alert_rule.updated', targetType: 'alert_rule', targetId: id,
@@ -264,6 +267,7 @@ export class RulesService {
   createWebhook(auth: AuthContext, t: TenantContext, dto: WebhookDto, meta: RequestMeta) {
     const cipher = this.cipher(); const u = this.checkUrl(dto.url);
     return this.db.withTenant(t.orgId, auth.userId, async (c) => {
+      await requireCapacity(c, t.orgId, 'notification_channels', 1, 'webhooks');
       const id = (await c.query<{ id: string }>('SELECT gen_random_uuid() AS id')).rows[0]!.id;
       const secret = newWebhookSecret();
       await c.query(`INSERT INTO webhook_endpoints (id, tenant_id, name, url, secret_ciphertext, key_id, min_severity, created_by) VALUES ($1,$2,$3,$4,$5,$6,$7,$8)`,

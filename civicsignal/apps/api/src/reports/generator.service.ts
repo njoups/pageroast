@@ -1,13 +1,14 @@
 import { createHash } from 'node:crypto';
 import { Inject, Injectable } from '@nestjs/common';
 import type { PoolClient } from 'pg';
+import { loadEntitlements } from '../commercial/quota';
 import { CLOCK, type Clock } from '../alerts/clock';
 import { EmailChannel } from '../alerts/channels/email';
 import { DeliveryError } from '../alerts/channels/errors';
 import { ANALYSIS_PROVIDER } from '../analysis/providers';
 import type { AnalysisProvider } from '../analysis/providers/provider';
 import { sanitizeMultiSummary } from '../analysis/schemas';
-import { quotaState, recordAiUsage } from '../analysis/usage';
+import { llmUnavailable, quotaState, recordAiUsage } from '../analysis/usage';
 import * as E from '../analytics/engine';
 import { note, noteText, texts } from '../analytics/notes';
 import { AuditService } from '../audit/audit.service';
@@ -148,7 +149,9 @@ export class ReportGenerator {
 
     const analystNote = params.analystNote ? { text: params.analystNote, author: await this.userName(run.tenant_id, run.def_created_by), at: run.def_updated_at.toISOString() } : null;
     const { model, cited } = buildModel({
-      template: run.template, language: run.language, organization: run.org_name, project: run.project_name, brandColor: run.brand ?? '#2a78d6',
+      template: run.template, language: run.language, organization: run.org_name, project: run.project_name,
+      // A custom brand colour is a white-label feature of the plan; otherwise the default palette is used.
+      brandColor: (run.brand && await this.tx(run.tenant_id, async (c) => (await loadEntitlements(c, run.tenant_id)).features.white_label_reports)) ? run.brand : '#2a78d6',
       generatedAt: now, from: run.period_start, to: run.period_end, timezone: run.timezone, name: run.name, analystNote,
     }, data, { claims: ai.claims, ai: ai.info });
     model.limitations.push(...texts(freshness.noteKeys, run.language));
@@ -245,9 +248,9 @@ export class ReportGenerator {
     const records = [...d.notable, ...d.negative, ...(d.focusIssue?.evidence ?? [])].filter((a, i, all) => all.findIndex((x) => x.id === a.id) === i).slice(0, 15);
     if (!records.length) return { claims: [], info: { ...info, method: 'unavailable' }, tokensIn: 0, tokensOut: 0 };
     const quota = await this.tx(run.tenant_id, (c) => quotaState(c));
-    if (quota.tokensThisMonth >= quota.monthlyTokenLimit) {
+    if (llmUnavailable(quota)) {
       logEvent('info', 'reports.ai_quota_reached', { tenantId: run.tenant_id, runId: run.id });
-      return { claims: [], info: { ...info, method: 'unavailable', dropped: [{ text: '', reason: 'monthly_token_limit_reached' }] }, tokensIn: 0, tokensOut: 0 };
+      return { claims: [], info: { ...info, method: 'unavailable', dropped: [{ text: '', reason: quota.llmBlocked ?? 'monthly_token_limit_reached' }] }, tokensIn: 0, tokensOut: 0 };
     }
     const excerpts = await this.tx(run.tenant_id, async (c) => new Map((await c.query<{ id: string; excerpt: string | null }>(
       'SELECT id, excerpt FROM mentions WHERE id = ANY($1::uuid[])', [records.map((r) => r.id)])).rows.map((r) => [r.id, r.excerpt])));

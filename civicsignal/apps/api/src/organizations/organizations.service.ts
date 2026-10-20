@@ -1,9 +1,12 @@
 import { randomBytes, randomUUID } from 'node:crypto';
-import { Injectable } from '@nestjs/common';
+import { Inject, Injectable } from '@nestjs/common';
 import type { PoolClient } from 'pg';
 import { AuditService } from '../audit/audit.service';
 import { canAssignRole, canRemoveMember, Role } from '../authz/permissions';
 import { Database } from '../database/database.service';
+import { AppConfig, CONFIG } from '../config';
+import { assertAccess, gaugeNotices, loadEntitlements, requireCapacity } from '../commercial/quota';
+import { startTrial } from '../commercial/subscriptions';
 import { badRequest, conflict, forbidden, notFound } from '../common/errors';
 import type { AuthContext, RequestMeta, TenantContext } from '../common/request';
 import { hashToken } from '../identity/local-identity.provider';
@@ -20,7 +23,7 @@ export function slugify(name: string): string {
 
 @Injectable()
 export class OrganizationsService {
-  constructor(private readonly db: Database, private readonly audit: AuditService) {}
+  constructor(private readonly db: Database, private readonly audit: AuditService, @Inject(CONFIG) private readonly config: AppConfig) {}
 
   async create(auth: AuthContext, dto: CreateOrgDto, meta: RequestMeta) {
     const id = randomUUID();
@@ -31,7 +34,9 @@ export class OrganizationsService {
          ON CONFLICT (slug) DO NOTHING RETURNING id, name, slug, settings, created_at`, [id, dto.name, slug, auth.userId]);
       if (!t.rows[0]) throw conflict('slug_taken', 'This organization URL is already in use');
       await c.query(`INSERT INTO memberships (tenant_id, user_id, role) VALUES ($1,$2,'owner')`, [id, auth.userId]);
-      await this.audit.record(c, { tenantId: id, actorUserId: auth.userId, action: 'org.created', targetType: 'tenant', targetId: id, metadata: { name: dto.name }, meta });
+      // Every new organization starts on the configured trial plan (no payment details needed).
+      const sub = await startTrial(c, id, this.config.billing.trialPlan, { type: 'user', userId: auth.userId });
+      await this.audit.record(c, { tenantId: id, actorUserId: auth.userId, action: 'org.created', targetType: 'tenant', targetId: id, metadata: { name: dto.name, plan: sub.plan_code, subscriptionStatus: sub.status }, meta });
       return { ...t.rows[0], role: 'owner' as Role };
     });
   }
@@ -119,6 +124,7 @@ export class OrganizationsService {
     return this.db.withTenant(t.orgId, auth.userId, async (c) => {
       const existing = await c.query('SELECT 1 FROM memberships m JOIN users u ON u.id = m.user_id WHERE m.tenant_id = $1 AND u.email = $2', [t.orgId, dto.email]);
       if (existing.rowCount) throw conflict('already_member', 'This person is already a member');
+      await requireCapacity(c, t.orgId, 'seats');      // members + open invitations, locked against concurrent invites
       const r = await c.query(
         `INSERT INTO invitations (tenant_id, email, role, token_hash, invited_by, expires_at)
          VALUES ($1,$2,$3,$4,$5, now() + make_interval(days => $6))
@@ -126,6 +132,7 @@ export class OrganizationsService {
          RETURNING id, email, role, expires_at, created_at`,
         [t.orgId, dto.email, dto.role, hashToken(token), auth.userId, INVITE_TTL_DAYS]);
       if (!r.rows[0]) throw conflict('invitation_pending', 'An open invitation already exists for this email; revoke it first');
+      await gaugeNotices(c, await loadEntitlements(c, t.orgId), 'seats');
       await this.audit.record(c, { tenantId: t.orgId, actorUserId: auth.userId, action: 'invitation.created', targetType: 'invitation', targetId: r.rows[0].id, metadata: { email: dto.email, role: dto.role }, meta });
       // The raw token is returned exactly once. Email delivery is not configured in M1.
       return { ...r.rows[0], token, delivery: 'manual' as const };
@@ -154,6 +161,8 @@ export class OrganizationsService {
     // Same response for unknown token and wrong recipient so tokens can't be probed for validity.
     if (!inv || inv.email !== auth.email) throw notFound('Invitation');
     return this.db.run({ system: true, tenantId: inv.tenant_id, userId: auth.userId }, async (c) => {
+      // The seat was counted when the invitation was created; an inactive subscription still blocks new members.
+      assertAccess(await loadEntitlements(c, inv.tenant_id), 'write');
       const claimed = await c.query('UPDATE invitations SET accepted_at = now() WHERE id = $1 AND accepted_at IS NULL RETURNING id', [inv.id]);
       if (!claimed.rowCount) throw notFound('Invitation');
       const m = await c.query(

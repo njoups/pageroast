@@ -12,7 +12,9 @@ const REQUIRED = ['tenants', 'users', 'memberships', 'projects', 'project_member
   'notification_deliveries', 'webhook_endpoints', 'webhook_deliveries', 'activity_hourly', 'topic_activity_daily', 'alert_evaluations',
   'analytics_hourly', 'analytics_state', 'analytics_cache', 'report_definitions', 'report_schedules', 'report_runs', 'report_run_sources',
   'report_artifacts', 'report_deliveries', 'password_reset_tokens', 'audit_chain_heads', 'tenant_data_controls', 'retention_runs', 'deletion_requests',
-  'provider_usage', 'provider_pricing', 'social_budgets', 'social_budget_events', 'provider_lifecycle_runs'];
+  'provider_usage', 'provider_pricing', 'social_budgets', 'social_budget_events', 'provider_lifecycle_runs',
+  'plans', 'plan_versions', 'subscription_events', 'quota_overrides', 'usage_daily', 'usage_period_totals', 'usage_notices', 'contracts',
+  'invoices', 'invoice_lines', 'payments', 'billing_webhook_events', 'sales_requests', 'onboarding_progress', 'provider_cost_entries'];
 
 describe('migrations', () => {
   let c: Client;
@@ -52,7 +54,7 @@ describe('migrations', () => {
   it('every tenant-owned table has a tenant_id column', async () => {
     const r = await c.query(`SELECT table_name FROM information_schema.columns WHERE table_schema='public' AND column_name='tenant_id'`);
     const withTenant = new Set(r.rows.map((x) => x.table_name));
-    for (const t of REQUIRED.filter((t) => !['tenants', 'users', 'password_reset_tokens', 'audit_chain_heads', 'provider_pricing'].includes(t))) expect(withTenant.has(t)).toBe(true);
+    for (const t of REQUIRED.filter((t) => !['tenants', 'users', 'password_reset_tokens', 'audit_chain_heads', 'provider_pricing', 'plans', 'plan_versions'].includes(t))) expect(withTenant.has(t)).toBe(true);
   });
 });
 

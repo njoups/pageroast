@@ -2,7 +2,7 @@ import { INestApplication } from '@nestjs/common';
 import { Client } from 'pg';
 import request from 'supertest';
 import { OWNER_URL } from '../env';
-import { addMember, createOrg, registerUser, testApp, TestUser } from '../helpers';
+import { addMember, createOrg, registerUser, setPlanForTest, testApp, TestUser } from '../helpers';
 
 describe('organizations, roles, projects and tenant isolation (e2e)', () => {
   let app: INestApplication;
@@ -14,6 +14,7 @@ describe('organizations, roles, projects and tenant isolation (e2e)', () => {
     alice = await registerUser(app, 'Alice Owner');
     bob = await registerUser(app, 'Bob Owner');
     orgA = await createOrg(app, alice, 'Kementerian A');
+    await setPlanForTest(orgA, 'pilot');   // many members and projects; plan limits are covered in commercial.e2e.ts
     orgB = await createOrg(app, bob, 'Agency B');
     projectB = (await http().post(`/api/v1/organizations/${orgB}/projects`).set('Cookie', bob.cookie).send({ name: 'Secret B' }).expect(201)).body.id;
   });

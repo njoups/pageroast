@@ -4,7 +4,7 @@ import { logEvent } from '../ingestion/log';
 import { ANALYSIS_PROVIDER } from '../analysis/providers';
 import type { AnalysisProvider } from '../analysis/providers/provider';
 import { sanitizeMultiSummary } from '../analysis/schemas';
-import { recordAiUsage } from '../analysis/usage';
+import { llmUnavailable, quotaState, recordAiUsage } from '../analysis/usage';
 import { CLOCK, type Clock } from './clock';
 
 const SYS = '00000000-0000-0000-0000-000000000000';
@@ -27,7 +27,8 @@ export class IssueSummaryService {
     const total = await this.db.withTenant(tenantId, SYS, async (c) => (await c.query<{ n: number }>('SELECT count(*)::int AS n FROM alert_evidence WHERE issue_id = $1', [issueId])).rows[0]!.n);
     const now = this.clock.now();
     let summary: Record<string, unknown> | null = null;
-    if (this.provider.method !== 'baseline') {
+    const quota = this.provider.method !== 'baseline' ? await this.db.withTenant(tenantId, SYS, (c) => quotaState(c)) : null;
+    if (quota && !llmUnavailable(quota)) {
       try {
         const refs = new Map(records.map((r, i) => [`R${i + 1}`, r.id]));
         const res = await this.provider.summarize({ scope: 'issue', language: records[0]!.language === 'en' ? 'en' : 'id',

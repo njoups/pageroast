@@ -7,6 +7,8 @@ import { nextRunAt, previousPeriod, type Frequency } from '../analytics/tz';
 import { AuditService } from '../audit/audit.service';
 import { AppConfig, CONFIG } from '../config';
 import { Database } from '../database/database.service';
+import { EXECUTIVE_TEMPLATES } from '../commercial/catalog';
+import { consume, loadEntitlements } from '../commercial/quota';
 import { IngestionCoreModule } from '../ingestion/ingestion-core.module';
 import { logEvent } from '../ingestion/log';
 import { KEY_PREFIX, redisConnection } from '../ingestion/queue';
@@ -85,17 +87,27 @@ export async function reportsSchedulerTick(db: Database, enqueuer: ReportsEnqueu
       const period = previousPeriod(spec.frequency, sch.next_run_at, spec.timezone, spec.periodDays ?? 7);
       const key = `${s.id}:${period.start.toISOString()}`;
       const today = (await c.query<{ n: number }>(`SELECT count(*)::int AS n FROM report_runs WHERE queued_at > $1`, [new Date(now.getTime() - 86_400_000)])).rows[0]!.n;
-      const def = (await c.query('SELECT template FROM report_definitions WHERE id = $1', [sch.definition_id])).rows[0];
-      const ins = await c.query<{ id: string }>(`INSERT INTO report_runs (tenant_id, definition_id, schedule_id, template, template_version, period_start, period_end, timezone, idempotency_key, trigger, status, requested_by, error, finished_at, queued_at)
-        VALUES ($1,$2,$3,$4,'pending',$5,$6,$7,$8,'schedule',$9,$10,$11,$12,$13) ON CONFLICT (tenant_id, idempotency_key) DO NOTHING RETURNING id`,
-        [s.tenant_id, sch.definition_id, s.id, def.template, period.start, period.end, spec.timezone, key, today >= config.reports.runsPerDay ? 'failed' : 'queued', sch.created_by,
-          today >= config.reports.runsPerDay ? `Daily report quota (${config.reports.runsPerDay}) reached` : null, today >= config.reports.runsPerDay ? now : null, now]);
+      const def = (await c.query('SELECT template, project_id FROM report_definitions WHERE id = $1', [sch.definition_id])).rows[0];
+      // Commercial gates (plan status, features, plan quota). A blocked run is created and then failed with the reason
+      // (visible to its recipients), never silently dropped.
+      const ent = await loadEntitlements(c, s.tenant_id, now);
+      let block: string | null = today >= config.reports.runsPerDay ? `Daily report quota (${config.reports.runsPerDay}) reached` : null;
+      if (!block && ent.access !== 'full') block = `Subscription is ${ent.subscription?.status ?? 'missing'}; scheduled reports are paused`;
+      if (!block && !ent.features.scheduled_reports) block = 'Scheduled reports are not included in the plan';
+      if (!block && EXECUTIVE_TEMPLATES.has(def.template) && !ent.features.executive_analytics) block = 'This report template is not included in the plan';
+      const ins = await c.query<{ id: string }>(`INSERT INTO report_runs (tenant_id, definition_id, schedule_id, template, template_version, period_start, period_end, timezone, idempotency_key, trigger, status, requested_by, queued_at)
+        VALUES ($1,$2,$3,$4,'pending',$5,$6,$7,$8,'schedule','queued',$9,$10) ON CONFLICT (tenant_id, idempotency_key) DO NOTHING RETURNING id`,
+        [s.tenant_id, sch.definition_id, s.id, def.template, period.start, period.end, spec.timezone, key, sch.created_by, now]);
+      if (ins.rows[0] && !block) {
+        const u = await consume(c, s.tenant_id, { metric: 'reports_generated', quantity: 1, idempotencyKey: `report_run:${ins.rows[0].id}`, source: 'report_schedule', occurredAt: now, projectId: def.project_id }, { enforce: true, ent });
+        if (!u.recorded && !u.duplicate) block = `Plan limit reached. ${u.decision.reason}`;
+      }
       await c.query('UPDATE report_schedules SET next_run_at = $2, last_run_at = $3 WHERE id = $1', [s.id, next, now]);
-      return ins.rows[0] ? { runId: ins.rows[0].id, quota: today >= config.reports.runsPerDay, createdBy: sch.created_by as string | null } : null;
+      return ins.rows[0] ? { runId: ins.rows[0].id, block, createdBy: sch.created_by as string | null } : null;
     });
     if (!res) continue;
     created++;
-    if (res.quota) await generator.fail({ id: res.runId, tenant_id: s.tenant_id, schedule_id: s.id, requested_by: null, def_created_by: res.createdBy }, `Daily report quota (${config.reports.runsPerDay}) reached`);
+    if (res.block) await generator.fail({ id: res.runId, tenant_id: s.tenant_id, schedule_id: s.id, requested_by: null, def_created_by: res.createdBy }, res.block);
     else await enqueuer.generate(s.tenant_id, res.runId);
   }
   // Recovery and hygiene.

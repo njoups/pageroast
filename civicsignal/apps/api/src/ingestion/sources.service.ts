@@ -16,6 +16,7 @@ import type { CredentialCipher } from './secrets';
 import type { CreateSourceDto, UpdateSourceDto } from './sources.dto';
 import { assertFetchableUrl, UnsafeUrlError } from './url';
 import { isSocialKind } from '../social/providers';
+import { collectionGate, commercialError, loadEntitlements, requireCapacity } from '../commercial/quota';
 
 const SOURCE_COLS = `s.id, s.name, s.domain, s.category, s.collection_method, s.feed_url, s.enabled, s.authorization_status,
   s.authorization_basis, s.verification_status, s.permitted_fields, s.permits_full_text, s.refresh_interval_seconds,
@@ -188,6 +189,7 @@ export class SourcesService {
       const cur = await this.loadRow(c, id);
       if (enabled && cur.authorization_status !== 'authorized') throw conflict('source_not_authorized', 'Only authorized sources can be enabled for collection');
       if (enabled && cur.connector_status === 'unconfigured') throw conflict('connector_unconfigured', 'Configure the connector credentials before enabling');
+      if (enabled && !cur.enabled) await requireCapacity(c, t.orgId, 'active_connectors', 1, isSocialKind(String(cur.kind)) ? 'social_listening' : undefined);
       await c.query(`UPDATE sources SET enabled = $2, health_status = CASE WHEN $2 THEN health_status ELSE 'disabled' END WHERE id = $1`, [id, enabled]);
       await this.audit.record(c, { tenantId: t.orgId, actorUserId: auth.userId, action: enabled ? 'source.enabled' : 'source.disabled', targetType: 'source', targetId: id, meta });
       return presentSource(await this.loadRow(c, id));
@@ -215,6 +217,8 @@ export class SourcesService {
     return this.db.withTenant(t.orgId, auth.userId, async (c) => {
       const cur = await this.loadRow(c, id);
       if (cur.authorization_status !== 'authorized') throw conflict('source_not_authorized', 'Only authorized sources can be collected');
+      const gate = await collectionGate(c, await loadEntitlements(c, t.orgId), isSocialKind(String(cur.kind)));
+      if (gate) throw commercialError('quota_exceeded', gate);
       const key = jobIds.manual(id);
       const r = await c.query<{ id: string }>(
         `INSERT INTO connector_runs (tenant_id, connector_id, source_id, idempotency_key, status, trigger, requested_by) VALUES ($1,$2,$3,$4,'queued','manual',$5) RETURNING id`,
@@ -234,6 +238,8 @@ export class SourcesService {
       if (!run) throw notFound('Run');
       if (!['failed', 'dead_lettered'].includes(run.status)) throw conflict('run_not_retryable', `Only failed or dead-lettered runs can be retried (this run is ${run.status})`);
       if (cur.authorization_status !== 'authorized') throw conflict('source_not_authorized', 'Only authorized sources can be collected');
+      const gate = await collectionGate(c, await loadEntitlements(c, t.orgId), isSocialKind(String(cur.kind)));
+      if (gate) throw commercialError('quota_exceeded', gate);
       const key = jobIds.retry(runId);
       const r = await c.query<{ id: string }>(
         `INSERT INTO connector_runs (tenant_id, connector_id, source_id, idempotency_key, status, trigger, requested_by) VALUES ($1,$2,$3,$4,'queued','retry',$5)

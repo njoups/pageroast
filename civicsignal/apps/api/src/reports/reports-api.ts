@@ -16,6 +16,8 @@ import { AppConfig, CONFIG } from '../config';
 import { AppError, badRequest, notFound } from '../common/errors';
 import { Auth, AuthContext, Meta, RequestMeta, Tenant, TenantContext } from '../common/request';
 import { Database } from '../database/database.service';
+import { EXECUTIVE_TEMPLATES } from '../commercial/catalog';
+import { assertAccess, assertFeature, commercialError, consume, loadEntitlements, requireCapacity } from '../commercial/quota';
 import { ReportGenerator } from './generator.service';
 import { DefinitionSchema, GenerateSchema, ReportParamsSchema, SchedulePatchSchema, ScheduleSchema, zodIssues } from './report-config';
 import { ReportsEnqueuer } from './reports-queue';
@@ -100,6 +102,7 @@ export class ReportsService {
     return this.db.withTenant(t.orgId, auth.userId, async (c) => {
       await this.requireProject(c, auth, t, dto.projectId);
       await this.validateRefs(c, dto.projectId, dto.params);
+      if (EXECUTIVE_TEMPLATES.has(dto.template)) assertFeature(await loadEntitlements(c, t.orgId), 'executive_analytics');
       const d = (await c.query(`INSERT INTO report_definitions (tenant_id, project_id, template, name, params, language, ai_commentary, created_by)
         VALUES ($1,$2,$3,$4,$5,$6,$7,$8) RETURNING *`, [t.orgId, dto.projectId, dto.template, dto.name, JSON.stringify(dto.params), dto.language, dto.aiCommentary, auth.userId])).rows[0];
       await this.audit.record(c, { tenantId: t.orgId, actorUserId: auth.userId, action: 'report.definition_created', targetType: 'report_definition', targetId: d.id, metadata: { template: dto.template }, meta });
@@ -139,6 +142,9 @@ export class ReportsService {
       const tz = await this.tz(c, t.orgId);
       const now = this.clock.now();
       const tpl = TEMPLATES[d.template as keyof typeof TEMPLATES];
+      const ent = await loadEntitlements(c, t.orgId, now);
+      assertAccess(ent, 'metered');
+      if (EXECUTIVE_TEMPLATES.has(d.template)) assertFeature(ent, 'executive_analytics');
       let start: Date; let end: Date;
       if (dto.periodStart || dto.periodEnd) {
         if (!dto.periodStart || !dto.periodEnd) throw badRequest('validation_failed', 'Give both periodStart and periodEnd');
@@ -158,6 +164,9 @@ export class ReportsService {
       if (q.active >= this.config.reports.concurrentRuns) throw tooMany(`At most ${this.config.reports.concurrentRuns} reports can be generated at the same time`);
       const run = (await c.query(`INSERT INTO report_runs (tenant_id, definition_id, template, template_version, period_start, period_end, timezone, idempotency_key, trigger, requested_by, queued_at)
         VALUES ($1,$2,$3,'pending',$4,$5,$6,$7,'manual',$8,$9) RETURNING id, status, period_start, period_end, timezone`, [t.orgId, id, d.template, start, end, tz, key, auth.userId, now])).rows[0];
+      // Plan quota, checked and consumed atomically with the run (a refusal rolls the run back).
+      const u = await consume(c, t.orgId, { metric: 'reports_generated', quantity: 1, idempotencyKey: `report_run:${run.id}`, source: 'reports', occurredAt: now, projectId: d.project_id }, { enforce: true, ent });
+      if (!u.recorded && !u.duplicate) throw commercialError('quota_exceeded', `Plan limit reached. ${u.decision.reason}`, u.decision);
       await this.audit.record(c, { tenantId: t.orgId, actorUserId: auth.userId, action: 'report.generation_requested', targetType: 'report_run', targetId: run.id, metadata: { definitionId: id }, meta });
       return { run, created: true };
     });
@@ -218,6 +227,8 @@ export class ReportsService {
     if (format !== 'pdf' && format !== 'csv') throw notFound('Artifact');
     const a = await this.db.withTenant(t.orgId, auth.userId, async (c) => {
       const run = await this.loadRun(c, auth, t, id);
+      const u = await consume(c, t.orgId, { metric: 'exports', quantity: 1, idempotencyKey: `download:${id}:${format}:${randomUUID()}`, source: 'reports', projectId: run.project_id }, { enforce: true });
+      if (!u.recorded && !u.duplicate) throw commercialError('quota_exceeded', `Plan limit reached. ${u.decision.reason}`, u.decision);
       const art = (await c.query(`SELECT filename, content_type, size_bytes, sha256, data, expires_at FROM report_artifacts WHERE run_id = $1 AND format = $2`, [id, format])).rows[0];
       if (!art) throw notFound('Artifact');
       if (!art.data || art.expires_at <= this.clock.now()) throw new AppError(410, 'artifact_expired', 'This file has expired under the retention policy; generate the report again');
@@ -269,6 +280,7 @@ export class ReportsService {
       await this.checkRecipients(c, d.project_id, recipients);
       const active = (await c.query<{ n: number }>('SELECT count(*)::int AS n FROM report_schedules WHERE is_active')).rows[0]!.n;
       if (dto.isActive && active >= MAX_ACTIVE_SCHEDULES) throw tooMany(`At most ${MAX_ACTIVE_SCHEDULES} active report schedules per organization`);
+      if (dto.isActive) await requireCapacity(c, t.orgId, 'report_schedules', 1, 'scheduled_reports');
       const tz = dto.timezone ?? await this.tz(c, t.orgId);
       const next = nextRunAt({ frequency: dto.frequency as Frequency, timeOfDay: dto.timeOfDay, dayOfWeek: dto.dayOfWeek, dayOfMonth: dto.dayOfMonth, periodDays: dto.periodDays, timezone: tz }, this.clock.now());
       const s = (await c.query(`INSERT INTO report_schedules (tenant_id, definition_id, frequency, time_of_day, day_of_week, day_of_month, period_days, timezone, recipient_user_ids, channels, is_active, next_run_at, created_by)
@@ -296,6 +308,7 @@ export class ReportsService {
       if (checked.isActive && !s.is_active) {
         const active = (await c.query<{ n: number }>('SELECT count(*)::int AS n FROM report_schedules WHERE is_active')).rows[0]!.n;
         if (active >= MAX_ACTIVE_SCHEDULES) throw tooMany(`At most ${MAX_ACTIVE_SCHEDULES} active report schedules per organization`);
+        await requireCapacity(c, t.orgId, 'report_schedules', 1, 'scheduled_reports');
       }
       const next = nextRunAt({ frequency: checked.frequency as Frequency, timeOfDay: checked.timeOfDay, dayOfWeek: checked.dayOfWeek, dayOfMonth: checked.dayOfMonth, periodDays: checked.periodDays, timezone: m.timezone }, this.clock.now());
       const r = (await c.query(`UPDATE report_schedules SET frequency = $2, time_of_day = $3, day_of_week = $4, day_of_month = $5, period_days = $6, timezone = $7, recipient_user_ids = $8, channels = $9,

@@ -43,3 +43,20 @@ export async function addMember(app: INestApplication, owner: TestUser, orgId: s
   await request(app.getHttpServer()).post('/api/v1/invitations/accept').set('Cookie', u.cookie).send({ token: inv.body.token }).expect(200);
   return u;
 }
+
+/**
+ * Test setup only: moves an organization to another plan directly in the database (owner connection), recording the
+ * change in the subscription history. Used by suites whose subject is not plan limits; plan behaviour itself is tested
+ * through the platform API in commercial.e2e.ts.
+ */
+export async function setPlanForTest(orgId: string, planCode: string): Promise<void> {
+  const { Client } = await import('pg');
+  const c = new Client({ connectionString: OWNER_URL });
+  await c.connect();
+  try {
+    await c.query(`UPDATE subscriptions s SET plan_code = p.code, plan_version_id = pv.id, status = 'active', trial_ends_at = NULL, billing_mode = 'manual'
+      FROM plans p JOIN plan_versions pv ON pv.plan_id = p.id AND pv.effective_to IS NULL WHERE p.code = $2 AND s.tenant_id = $1 AND s.ended_at IS NULL`, [orgId, planCode]);
+    await c.query(`INSERT INTO subscription_events (tenant_id, subscription_id, event, to_status, actor_type, reason)
+      SELECT tenant_id, id, 'plan_assigned', status, 'system', 'test setup' FROM subscriptions WHERE tenant_id = $1 AND ended_at IS NULL`, [orgId]);
+  } finally { await c.end(); }
+}

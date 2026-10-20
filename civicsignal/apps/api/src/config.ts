@@ -87,6 +87,17 @@ export interface AppConfig {
   };
   email: { smtpUrl: string | null; from: string | null };
   whatsapp: { accessToken: string | null; phoneNumberId: string | null; templateName: string | null; templateLanguage: string; apiBaseUrl: string };
+  billing: {
+    /** Payment provider adapter: 'none' (default; contract/manual billing only) or 'test' (local simulator; refused in production). */
+    provider: 'none' | 'test';
+    testWebhookSecret: string | null;
+    /** Plan code new organizations start on (its trial_days decide the trial length). */
+    trialPlan: string;
+    /** Prefix of manual invoice numbers, e.g. INV → INV-2026-000001. */
+    invoicePrefix: string;
+    /** Where sales requests are emailed (optional; requests are always stored). */
+    salesEmail: string | null;
+  };
 }
 
 function parseHostSpacing(v: string | undefined): Record<string, number> {
@@ -192,7 +203,18 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
       templateName: env.WHATSAPP_TEMPLATE_NAME || null, templateLanguage: env.WHATSAPP_TEMPLATE_LANGUAGE || 'id',
       apiBaseUrl: env.WHATSAPP_API_BASE_URL || 'https://graph.facebook.com/v21.0',
     },
+    billing: {
+      provider: (env.BILLING_PROVIDER || 'none') as AppConfig['billing']['provider'],
+      testWebhookSecret: env.BILLING_TEST_WEBHOOK_SECRET || null,
+      trialPlan: env.COMMERCIAL_TRIAL_PLAN || 'trial',
+      invoicePrefix: env.INVOICE_NUMBER_PREFIX || 'INV',
+      salesEmail: env.BILLING_SALES_EMAIL || null,
+    },
   };
+  if (!['none', 'test'].includes(cfg.billing.provider)) throw new Error('BILLING_PROVIDER must be none or test (no live payment provider adapter is implemented)');
+  if (cfg.billing.provider === 'test' && (!cfg.billing.testWebhookSecret || cfg.billing.testWebhookSecret.length < 24)) throw new Error('BILLING_PROVIDER=test requires BILLING_TEST_WEBHOOK_SECRET (at least 24 characters)');
+  if (!/^[a-z][a-z0-9_]{1,40}$/.test(cfg.billing.trialPlan)) throw new Error('COMMERCIAL_TRIAL_PLAN must be a plan code');
+  if (!/^[A-Z0-9-]{1,12}$/.test(cfg.billing.invoicePrefix)) throw new Error('INVOICE_NUMBER_PREFIX must be 1-12 characters A-Z, 0-9 or -');
   if (cfg.email.smtpUrl && !/^smtps?:\/\//.test(cfg.email.smtpUrl)) throw new Error('SMTP_URL must start with smtp:// or smtps://');
   if (cfg.email.smtpUrl && !cfg.email.from) throw new Error('EMAIL_FROM is required when SMTP_URL is set');
   if (cfg.email.from && /[\r\n]/.test(cfg.email.from)) throw new Error('EMAIL_FROM must be a single line');
@@ -213,6 +235,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
     if (cfg.ai.provider === 'test') throw new Error('AI_PROVIDER=test is for automated tests only and is refused in production');
     if (cfg.ai.provider === 'anthropic' && !cfg.ai.anthropicApiKey) throw new Error('AI_PROVIDER=anthropic requires ANTHROPIC_API_KEY');
     if (cfg.alerts.webhookAllowHttp) throw new Error('ALERTS_WEBHOOK_ALLOW_HTTP is for tests only and is refused in production');
+    if (cfg.billing.provider === 'test') throw new Error('BILLING_PROVIDER=test is a local simulator and is refused in production');
     if (env.YOUTUBE_API_BASE_URL) throw new Error('YOUTUBE_API_BASE_URL is for contract tests only and is refused in production');
   }
   if (prod && appEnv !== 'local') {

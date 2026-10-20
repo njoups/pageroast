@@ -3,6 +3,7 @@ import type { PoolClient } from 'pg';
 import { AuditService } from '../audit/audit.service';
 import { seesAllProjects } from '../authz/permissions';
 import { Database } from '../database/database.service';
+import { requireCapacity } from '../commercial/quota';
 import { badRequest, conflict, notFound } from '../common/errors';
 import type { AuthContext, RequestMeta, TenantContext } from '../common/request';
 import type { CreateProjectDto, UpdateProjectDto } from './dto';
@@ -49,6 +50,7 @@ export class ProjectsService {
   create(auth: AuthContext, t: TenantContext, dto: CreateProjectDto, meta: RequestMeta) {
     checkRange(dto.dateRangeStart, dto.dateRangeEnd);
     return this.db.withTenant(t.orgId, auth.userId, async (c) => {
+      await requireCapacity(c, t.orgId, 'projects');
       const r = await c.query(
         `INSERT INTO projects (tenant_id, name, objective, languages, date_range_start, date_range_end, created_by)
          VALUES ($1,$2,$3,$4,$5,$6,$7) RETURNING id`,
@@ -86,7 +88,8 @@ export class ProjectsService {
 
   setArchived(auth: AuthContext, t: TenantContext, id: string, archived: boolean, meta: RequestMeta) {
     return this.db.withTenant(t.orgId, auth.userId, async (c) => {
-      await this.load(c, auth, t, id, true);
+      const cur = await this.load(c, auth, t, id, true);
+      if (!archived && cur.status === 'archived') await requireCapacity(c, t.orgId, 'projects');   // unarchiving takes a slot again
       await c.query(
         `UPDATE projects SET status = $2, archived_at = CASE WHEN $2 = 'archived' THEN now() ELSE NULL END WHERE id = $1`,
         [id, archived ? 'archived' : 'active']);

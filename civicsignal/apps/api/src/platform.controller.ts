@@ -24,7 +24,7 @@ class PricingDto {
 }
 
 @Injectable()
-class PlatformAdminGuard implements CanActivate {
+export class PlatformAdminGuard implements CanActivate {
   canActivate(ctx: ExecutionContext): boolean {
     if (!ctx.switchToHttp().getRequest<AppRequest>().auth?.isPlatformAdmin) throw forbidden();
     return true;

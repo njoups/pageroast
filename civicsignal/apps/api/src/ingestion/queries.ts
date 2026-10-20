@@ -6,6 +6,7 @@ import { AuditService } from '../audit/audit.service';
 import { SessionGuard } from '../auth/session.guard';
 import { RequirePermission, TenantGuard } from '../authz/guards';
 import { Database } from '../database/database.service';
+import { requireCapacity } from '../commercial/quota';
 import { badRequest, conflict, notFound } from '../common/errors';
 import { Auth, AuthContext, Meta, RequestMeta, Tenant, TenantContext } from '../common/request';
 import { ProjectsService } from '../projects/projects.service';
@@ -59,6 +60,7 @@ export class QueriesService {
     return this.db.withTenant(t.orgId, auth.userId, async (c) => {
       const p = await this.projects.assertVisible(c, auth, t, projectId, true);
       if (p.status === 'archived') throw conflict('project_archived', 'Unarchive the project before editing its queries');
+      if (dto.isActive ?? true) await requireCapacity(c, t.orgId, 'monitoring_queries');
       const r = await c.query<{ id: string }>(
         `INSERT INTO monitoring_queries (tenant_id, project_id, name, keywords, aliases, exclusions, boolean_expression, languages, is_active)
          VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9) RETURNING id`,
@@ -76,6 +78,7 @@ export class QueriesService {
       if (p.status === 'archived') throw conflict('project_archived', 'Unarchive the project before editing its queries');
       const cur = (await c.query('SELECT * FROM monitoring_queries WHERE id = $1 AND project_id = $2 FOR UPDATE', [id, projectId])).rows[0];
       if (!cur) throw notFound('Query');
+      if (dto.isActive === true && !cur.is_active) await requireCapacity(c, t.orgId, 'monitoring_queries');
       const def = {
         keywords: dto.keywords ?? cur.keywords, aliases: dto.aliases ?? cur.aliases, exclusions: dto.exclusions ?? cur.exclusions,
         booleanExpression: dto.booleanExpression !== undefined ? dto.booleanExpression?.trim() || null : cur.boolean_expression, languages: dto.languages ?? cur.languages,

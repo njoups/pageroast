@@ -3,6 +3,7 @@ import type { PoolClient } from 'pg';
 import { z } from 'zod';
 import { AuditService } from '../audit/audit.service';
 import { AppError, badRequest, conflict, notFound } from '../common/errors';
+import { assertAccess, assertFeature, loadEntitlements } from '../commercial/quota';
 import { CounterStore } from '../common/rate-limit';
 import type { AuthContext, RequestMeta, TenantContext } from '../common/request';
 import { Database } from '../database/database.service';
@@ -152,6 +153,9 @@ export class SocialService {
     const rights = { storageMaxDays: d.rights.storageMaxDays, refreshWithinDays: d.rights.refreshWithinDays, deletionOnRequestDays: d.rights.deletionOnRequestDays,
       derivedAnalysis: d.rights.derivedAnalysis, metricAggregation: d.rights.metricAggregation, provider: d.provider, verifiedAt: d.verifiedAt };
     return this.db.withTenant(t.orgId, auth.userId, async (c) => {
+      const ent = await loadEntitlements(c, t.orgId);
+      assertFeature(ent, 'social_listening');
+      assertAccess(ent, 'write');
       const s = await c.query<{ id: string }>(
         `INSERT INTO sources (tenant_id, name, domain, category, collection_method, feed_url, enabled, authorization_status, authorization_basis,
            permitted_fields, permits_full_text, refresh_interval_seconds, license_terms, usage_restrictions, redistribution_restrictions,

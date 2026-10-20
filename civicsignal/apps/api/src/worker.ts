@@ -23,6 +23,7 @@ import { ReportGenerator } from './reports/generator.service';
 import { AuditService } from './audit/audit.service';
 import { RetentionService, retentionTick } from './governance/retention.service';
 import { SocialLifecycleService, socialLifecycleTick } from './social/lifecycle.service';
+import { commercialTick } from './commercial/scheduler';
 import { analyticsRefreshTick, createReportsWorker, ReportsCoreModule, ReportsEnqueuer, reportsSchedulerTick } from './reports/reports-queue';
 
 @Module({ imports: [DatabaseModule, IngestionCoreModule, AlertsCoreModule, ReportsCoreModule], providers: [AuditService, RetentionService, SocialLifecycleService] })
@@ -104,6 +105,15 @@ async function main() {
     catch (e) { logEvent('error', 'social.lifecycle_error', { message: (e as Error).message }); } finally { lifecycleTicking = false; }
   };
   const lifecycleScheduler = runScheduler ? setInterval(() => void lifecycleRun(), 15 * 60_000) : null;
+  // Commercial lifecycle: trial expiry, past-due grace, scheduled plan changes, period renewal, contract terms, overdue invoices, usage notices.
+  let commercialTicking = false;
+  const commercialRun = async () => {
+    if (commercialTicking) return; commercialTicking = true;
+    try { const r = await commercialTick(db, config); if (Object.values(r).some((n) => n > 0)) logEvent('info', 'commercial.scheduler', { ...r }); }
+    catch (e) { logEvent('error', 'commercial.scheduler_error', { message: (e as Error).message }); } finally { commercialTicking = false; }
+  };
+  const commercialScheduler = runScheduler ? setInterval(() => void commercialRun(), 5 * 60_000) : null;
+  if (runScheduler) void commercialRun();
   const analyticsScheduler = runScheduler ? setInterval(() => void analyticsTick(), config.analytics.refreshIntervalMs) : null;
   const reportsScheduler = runScheduler ? setInterval(() => void reportsTick(), 60_000) : null;
   if (runScheduler) { void analyticsTick(); void reportsTick(); }
@@ -119,6 +129,7 @@ async function main() {
     if (reportsScheduler) clearInterval(reportsScheduler);
     if (retentionScheduler) clearInterval(retentionScheduler);
     if (lifecycleScheduler) clearInterval(lifecycleScheduler);
+    if (commercialScheduler) clearInterval(commercialScheduler);
     clearInterval(heartbeat);
     await consumer?.worker.close();   // waits for in-flight jobs
     await analysisWorker?.close();
