@@ -12,6 +12,9 @@ import { compileQuery, MatchDocument, type CompiledQuery } from './query';
 import type { SafeHttpClient } from './safe-http';
 import type { CredentialCipher } from './secrets';
 import { canonicalizeUrl, publisherDomain, redactUrl } from './url';
+import { isSocialKind } from '../social/providers';
+import { derivedAnalysisAllowed, type SourceRights } from '../social/rights';
+import { budgetPeriodEnd, checkBudgets, pauseConnector, providerDay, quotaShortfall, quotaState, recordProviderUsage } from '../social/quota';
 
 export const SAFE_HTTP = Symbol('SAFE_HTTP');
 export const CREDENTIAL_CIPHER = Symbol('CREDENTIAL_CIPHER');
@@ -22,7 +25,7 @@ export interface CollectJob { tenantId: string; sourceId: string; trigger: Trigg
 export interface RunCounts { seen: number; new: number; known: number; duplicate: number; rejected: number; matches: number }
 export type RunOutcome =
   | { status: 'succeeded'; runId: string; counts: RunCounts; notModified: boolean; skippedForCache: boolean }
-  | { status: 'already_succeeded' | 'skipped_disabled'; runId: string | null };
+  | { status: 'already_succeeded' | 'skipped_disabled' | 'skipped_paused'; runId: string | null };
 
 interface SourceRow {
   id: string; name: string; enabled: boolean; authorization_status: string; authorization_basis: string | null;
@@ -32,7 +35,11 @@ interface SourceRow {
   last_success_at: Date | null; consecutive_failures: number; verification_status: string;
   connector_id: string; kind: string; config: unknown; http_etag: string | null; http_last_modified: string | null;
   cache_valid_until: Date | null; ciphertext: string | null;
+  rights: SourceRights; paused_until: Date | null; paused_reason: string | null; derived_analysis_approved_at: Date | null;
 }
+
+/** Days before the provider's refresh deadline at which a refresh is scheduled (leaves room for retries). */
+const REFRESH_MARGIN_DAYS = 5;
 
 const PIPELINE_STAGES = ['fetch', 'validate', 'normalize', 'deduplicate', 'match', 'persist', 'queue_analysis', 'search_index', 'alerts', 'metrics'] as const;
 
@@ -59,7 +66,8 @@ export class IngestionPipeline {
 
   private loadSource(c: PoolClient, sourceId: string) {
     return c.query<SourceRow>(
-      `SELECT s.*, k.id AS connector_id, k.kind, k.config, k.http_etag, k.http_last_modified, k.cache_valid_until, cc.ciphertext
+      `SELECT s.*, k.id AS connector_id, k.kind, k.config, k.http_etag, k.http_last_modified, k.cache_valid_until, cc.ciphertext,
+              k.rights, k.paused_until, k.paused_reason, k.derived_analysis_approved_at
        FROM sources s JOIN connectors k ON k.source_id = s.id LEFT JOIN connector_credentials cc ON cc.connector_id = k.id
        WHERE s.id = $1`, [sourceId]).then((r) => r.rows[0]);
   }
@@ -75,6 +83,8 @@ export class IngestionPipeline {
       const src = await this.loadSource(c, job.sourceId);
       if (!src) return { kind: 'missing' as const };
       if (job.trigger === 'schedule' && !src.enabled) return { kind: 'disabled' as const };
+      // Paused social connectors (provider quota exhausted, budget limit) skip scheduled runs without recording a failure.
+      if (job.trigger === 'schedule' && src.paused_until && src.paused_until.getTime() > Date.now()) return { kind: 'paused' as const };
       const r = await c.query<{ id: string }>(
         `INSERT INTO connector_runs (tenant_id, connector_id, source_id, idempotency_key, status, attempt, trigger, requested_by, started_at)
          VALUES ($1,$2,$3,$4,'running',$5,$6,$7, now())
@@ -87,6 +97,7 @@ export class IngestionPipeline {
     });
     if (prep.kind === 'missing') throw new ConnectorError('not_found', 'Source no longer exists');
     if (prep.kind === 'disabled') return { status: 'skipped_disabled', runId: null };
+    if (prep.kind === 'paused') return { status: 'skipped_paused', runId: null };
     if (prep.kind === 'done') return { status: 'already_succeeded', runId: null };
     const { src, runId } = prep;
     const log = { tenantId: job.tenantId, sourceId: src.id, runId, attempt, trigger: job.trigger, kind: src.kind };
@@ -105,6 +116,7 @@ export class IngestionPipeline {
         try { credentials = this.cipher.decrypt(src.ciphertext, src.connector_id); }
         catch { throw new ConnectorError('auth', 'Stored credentials could not be decrypted (key rotated?)'); }
       }
+      if (isSocialKind(src.kind)) await this.socialPreflight(job, src, cfg);
       if (job.trigger === 'schedule' && src.cache_valid_until && src.cache_valid_until.getTime() > Date.now()) {
         skippedForCache = true;
         fetched = { status: 'not_modified', httpStatus: 0, records: [], rejected: [], cache: { etag: src.http_etag, lastModified: src.http_last_modified, validUntil: src.cache_valid_until }, meta: { title: null, language: null, format: 'cached' } };
@@ -114,17 +126,60 @@ export class IngestionPipeline {
     } catch (e) {
       const err = e instanceof ConnectorError ? e : new ConnectorError('network', (e as Error).message);
       await this.recordFailure(job, src, runId, err, isFinalAttempt, Date.now() - started);
+      if (isSocialKind(src.kind)) await this.socialAfterFailure(job, src, err);
       logEvent(err.retryable && !isFinalAttempt ? 'warn' : 'error', 'ingestion.run_failed', { ...log, errorKind: err.kind, httpStatus: err.opts.httpStatus, message: err.message, final: isFinalAttempt || !err.retryable });
       throw err;
     }
 
     const { counts, newOriginals } = await this.persist(job, src, runId, fetched, Date.now() - started, skippedForCache);
     // Hand new originals to the AI pipeline after commit. An AI/queue problem never fails the collection run.
-    if (newOriginals.length && this.analysis?.available) {
+    // Social records go only where the provider's terms permit derived analysis (recorded approval where required).
+    if (newOriginals.length && this.analysis?.available && derivedAnalysisAllowed(src)) {
       await this.analysis.enqueueMentions(job.tenantId, newOriginals, 'ingestion').catch((e) => logEvent('error', 'ingestion.analysis_enqueue_failed', { ...log, message: (e as Error).message }));
     }
     logEvent('info', 'ingestion.run_succeeded', { ...log, ...counts, notModified: fetched.status === 'not_modified', skippedForCache, durationMs: Date.now() - started });
     return { status: 'succeeded', runId, counts, notModified: fetched.status === 'not_modified', skippedForCache };
+  }
+
+  /**
+   * Social gates before any provider request: an active pause (provider quota, hard budget; soft budget blocks
+   * scheduled runs only), a hard or soft budget reached now, and whether today's remaining provider quota covers the
+   * worst case of this sync. Throws ConnectorError('quota') — not retried — and pauses scheduled collection.
+   */
+  private async socialPreflight(job: CollectJob, src: SourceRow, cfg: unknown) {
+    const connector = getConnector(src.kind)!;
+    await this.db.withTenant(job.tenantId, job.requestedBy ?? '00000000-0000-0000-0000-000000000000', async (c) => {
+      const now = new Date();
+      if (src.paused_until && src.paused_until > now && (src.paused_reason !== 'budget_soft_limit' || job.trigger === 'schedule')) {
+        throw new ConnectorError('quota', `Collection is paused until ${src.paused_until.toISOString()} (${src.paused_reason ?? 'paused'})`, { resumeAt: src.paused_until });
+      }
+      const budget = await checkBudgets(c, { tenantId: job.tenantId, connectorId: src.connector_id, kind: src.kind, now });
+      const hit = budget.items.find((i) => i.level === 'hard') ?? (job.trigger === 'schedule' ? budget.items.find((i) => i.level === 'soft') : undefined);
+      if (hit) {
+        const until = budgetPeriodEnd(src.kind, hit.period as 'day' | 'month', now);
+        await pauseConnector(c, { tenantId: job.tenantId, connectorId: src.connector_id, sourceId: src.id, until, reason: hit.level === 'hard' ? 'budget_hard_limit' : 'budget_soft_limit' });
+        throw new ConnectorError('quota', `Budget ${hit.level} limit reached for ${hit.metric} (${hit.value} this ${hit.period}); collection paused until ${until.toISOString()}`, { resumeAt: until });
+      }
+      const need = connector.estimateSyncUsage?.(cfg) ?? {};
+      const q = await quotaState(c, src.connector_id, src.kind, cfg, now);
+      const short = quotaShortfall(q, need);
+      if (short.length) {
+        const until = q.resetsAt ? new Date(q.resetsAt) : budgetPeriodEnd(src.kind, 'day', now);
+        await pauseConnector(c, { tenantId: job.tenantId, connectorId: src.connector_id, sourceId: src.id, until, reason: 'provider_quota',
+          metric: short[0]!.bucket, value: q.buckets.find((b) => b.key === short[0]!.bucket)?.used ?? 0, threshold: q.buckets.find((b) => b.key === short[0]!.bucket)?.limit ?? 0, periodKey: q.day });
+        throw new ConnectorError('quota', `Not enough provider quota left today for this sync (${short.map((x) => `${x.bucket}: needs up to ${x.need}, ${x.remaining} left`).join('; ')}); resumes after the quota resets`, { resumeAt: until });
+      }
+    });
+  }
+
+  /** Records provider usage of a failed sync and pauses on provider quota exhaustion. */
+  private async socialAfterFailure(job: CollectJob, src: SourceRow, err: ConnectorError) {
+    await this.db.withTenant(job.tenantId, job.requestedBy ?? '00000000-0000-0000-0000-000000000000', async (c) => {
+      if (err.opts.usage) await recordProviderUsage(c, { tenantId: job.tenantId, connectorId: src.connector_id, kind: src.kind, usage: err.opts.usage });
+      if (err.kind === 'quota' && err.opts.resumeAt && err.opts.httpStatus) {   // reported by the provider (not our own gate)
+        await pauseConnector(c, { tenantId: job.tenantId, connectorId: src.connector_id, sourceId: src.id, until: err.opts.resumeAt, reason: 'provider_quota', periodKey: providerDay(src.kind).day });
+      }
+    });
   }
 
   private async recordFailure(job: CollectJob, src: SourceRow, runId: string, err: ConnectorError, isFinal: boolean, durationMs: number) {
@@ -153,6 +208,23 @@ export class IngestionPipeline {
 
   private async persist(job: CollectJob, src: SourceRow, runId: string, fetched: FetchResult, fetchMs: number, skippedForCache: boolean): Promise<{ counts: RunCounts; newOriginals: string[] }> {
     const permitted = new Set(src.permitted_fields);
+    const social = isSocialKind(src.kind);
+    const now = new Date();
+    // Provider deadlines (e.g. YouTube: refresh or delete within 30 days of retrieval).
+    const deleteBy = social && src.rights?.storageMaxDays ? new Date(now.getTime() + src.rights.storageMaxDays * 86_400_000) : null;
+    const refreshDue = social && src.rights?.refreshWithinDays
+      ? new Date(now.getTime() + Math.max(src.rights.refreshWithinDays - REFRESH_MARGIN_DAYS, 1) * 86_400_000) : null;
+    const socialCols = (rec: RawRecord) => {
+      const sf = rec.social!;
+      const excerpt = permitted.has('excerpt') ? rec.summary : null;
+      return {
+        platform: sf.platform, contentType: sf.contentType, externalId: sf.externalId, parentExternalId: sf.parentExternalId,
+        authorRef: permitted.has('author') ? sf.authorRef : null,
+        // Hashtags only from text we are allowed to store; metrics only when the source permits storing them.
+        hashtags: sf.hashtags.filter((h) => `${rec.title}\n${excerpt ?? ''}`.toLowerCase().includes(`#${h}`)),
+        engagement: permitted.has('metrics') ? sf.engagement : {},
+      };
+    };
     const counts: RunCounts = { seen: fetched.records.length, new: 0, known: 0, duplicate: 0, rejected: fetched.rejected.length, matches: 0 };
     const rejections: Array<{ reason: string; index?: number; url?: string }> = fetched.rejected.slice(0, 20).map((r) => ({ ...r }));
     const stages: Record<string, string> = Object.fromEntries(PIPELINE_STAGES.map((s) => [s, 'pending']));
@@ -179,6 +251,19 @@ export class IngestionPipeline {
       const existing = valid.length
         ? (await c.query<{ id: string; canonical_url: string; source_id: string }>('SELECT id, canonical_url, source_id FROM mentions WHERE canonical_url = ANY($1::text[])', [valid.map((v) => v.canonical)])).rows
         : [];
+      // A social record seen again is a refresh: current text and metrics replace the stored ones and the provider
+      // deadlines restart (the record was just retrieved again).
+      if (social && existing.length) {
+        const byCanon = new Map(valid.map((v) => [v.canonical, v]));
+        for (const e of existing) {
+          const v = byCanon.get(e.canonical_url); if (!v?.rec.social) continue;
+          const sc = socialCols(v.rec);
+          await c.query(
+            `UPDATE mentions SET title = $2, excerpt = $3, hashtags = $4, engagement = $5, engagement_observed_at = now(), last_verified_at = now(),
+               refresh_due_at = $6, provider_delete_by = $7, normalized_title = $8, content_hash = $9 WHERE id = $1`,
+            [e.id, v.rec.title, v.excerpt, sc.hashtags, JSON.stringify(sc.engagement), refreshDue, deleteBy, v.nTitle, v.hash]);
+        }
+      }
       const byUrl = new Map(existing.map((e) => [e.canonical_url, e]));
       const fresh = valid.filter((v) => !byUrl.has(v.canonical));
       counts.known += valid.length - fresh.length;
@@ -221,23 +306,31 @@ export class IngestionPipeline {
       };
 
       for (const f of fresh) {
-        const decision = decideDuplicate({ publisherDomain: f.domain, normalizedTitle: f.nTitle, contentHash: f.hash }, candidates,
-          { similarityThreshold: this.config.ingestion.dedupSimilarity, minTokens: 5 });
+        // Social records are deduplicated by provider id only: different posts often share a title.
+        const decision = social ? { status: 'original' as const, duplicateOf: null, reason: null }
+          : decideDuplicate({ publisherDomain: f.domain, normalizedTitle: f.nTitle, contentHash: f.hash }, candidates,
+            { similarityThreshold: this.config.ingestion.dedupSimilarity, minTokens: 5 });
+        const sc = social && f.rec.social ? socialCols(f.rec) : null;
         const body = src.permits_full_text ? f.rec.content : null;
         const language = normLanguage(f.rec.language ?? fetched.meta.language);
         const ins = await c.query<{ id: string }>(
           `INSERT INTO mentions (tenant_id, source_id, url, canonical_url, title, excerpt, body, content_hash, language, publisher,
              publisher_domain, normalized_title, published_at, author, categories, guid, source_type, duplicate_status, duplicate_of,
-             duplicate_reason, retention_expires_at, license_ref, provenance, first_run_id, last_verified_at)
+             duplicate_reason, retention_expires_at, license_ref, provenance, first_run_id, last_verified_at,
+             platform, content_type, external_id, parent_external_id, author_ref, hashtags, engagement, engagement_observed_at,
+             refresh_due_at, provider_delete_by)
            VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,
-             CASE WHEN $21::int IS NULL THEN NULL ELSE now() + make_interval(days => $21::int) END, $22, $23, $24, now())
-           ON CONFLICT (tenant_id, canonical_url) DO NOTHING RETURNING id`,
+             CASE WHEN $21::int IS NULL THEN NULL ELSE now() + make_interval(days => $21::int) END, $22, $23, $24, now(),
+             $25, $26, $27, $28, $29, coalesce($30::text[], '{}'), coalesce($31::jsonb, '{}'::jsonb), CASE WHEN $25::text IS NULL THEN NULL ELSE now() END, $32, $33)
+           ON CONFLICT DO NOTHING RETURNING id`,
           [job.tenantId, src.id, f.rec.url, f.canonical, f.rec.title, f.excerpt, body, f.hash, language,
             f.rec.publisher ?? fetched.meta.title ?? src.name, f.domain, f.nTitle,
             permitted.has('published_at') ? f.rec.publishedAt : null,
             permitted.has('author') ? f.rec.author : null, permitted.has('categories') ? f.rec.categories : [],
             f.rec.guid, src.collection_method, decision.status, decision.duplicateOf, decision.reason, src.retention_days,
-            src.id, JSON.stringify({ ...provenanceBase, guid: f.rec.guid, publishedRaw: f.rec.publishedRaw, ...(f.rec.extra ?? {}) }), runId]);
+            src.id, JSON.stringify({ ...provenanceBase, guid: f.rec.guid, publishedRaw: f.rec.publishedRaw, ...(f.rec.extra ?? {}) }), runId,
+            sc?.platform ?? null, sc?.contentType ?? null, sc?.externalId ?? null, sc?.parentExternalId ?? null, sc?.authorRef ?? null,
+            sc?.hashtags ?? null, sc ? JSON.stringify(sc.engagement) : null, sc ? refreshDue : null, sc ? deleteBy : null]);
         const id = ins.rows[0]?.id;
         if (!id) { counts.known++; continue; } // inserted concurrently by another source's run
         counts.new++;
@@ -245,7 +338,7 @@ export class IngestionPipeline {
         candidates.push({ id, publisherDomain: f.domain, normalizedTitle: f.nTitle, contentHash: f.hash });
         newOriginals.push(id);
         if (compiled.length) {
-          const doc = new MatchDocument([f.rec.title, f.excerpt ?? '', body ?? ''].join('\n'));
+          const doc = new MatchDocument([f.rec.title, f.excerpt ?? '', body ?? '', ...(sc?.hashtags.map((h) => `#${h}`) ?? [])].join('\n'));
           for (const q of compiled) {
             const m = q.q.match(doc, language);
             if (!m.matched) continue;
@@ -274,6 +367,9 @@ export class IngestionPipeline {
            status = 'configured', verified_at = CASE WHEN $5 THEN now() ELSE verified_at END WHERE id = $1`,
         [src.connector_id, fetched.cache.etag, fetched.cache.lastModified, fetched.cache.validUntil, verifiedNow]);
       if (!skippedForCache) await this.recordUsage(c, job.tenantId, 'connector_requests', 1, src.id);
+      if (social) await recordProviderUsage(c, { tenantId: job.tenantId, connectorId: src.connector_id, kind: src.kind, usage: fetched.usage, retrieved: fetched.records.length, rejected: fetched.rejected.length });
+      // A successful sync ends an expired pause.
+      if (social && src.paused_until && src.paused_until <= new Date()) await c.query('UPDATE connectors SET paused_until = NULL, paused_reason = NULL WHERE id = $1', [src.connector_id]);
       if (counts.new) await this.recordUsage(c, job.tenantId, 'records_collected', counts.new, src.id);
       stages.metrics = 'ok';
       await c.query(

@@ -40,7 +40,7 @@ export async function refreshAnalytics(c: PoolClient, tenantId: string, now: Dat
            count(DISTINCT m.id) FILTER (WHERE m.duplicate_status = 'original'), count(DISTINCT m.id)
          FROM mentions m JOIN mention_matches mm ON mm.mention_id = m.id
          LEFT JOIN sentiment_results sr ON sr.analysis_id = m.analysis_id AND sr.target_type = 'article'
-         WHERE date_trunc('hour', ${T}) = ANY($2::timestamptz[])
+         WHERE date_trunc('hour', ${T}) = ANY($2::timestamptz[]) AND m.platform IS NULL   -- news articles only (see engine channel)
          GROUP BY 1, 2, 3, 4, 5, 6, 7`, [tenantId, batch]);
     }
   }

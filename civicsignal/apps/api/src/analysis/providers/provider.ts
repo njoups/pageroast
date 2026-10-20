@@ -19,7 +19,10 @@ export interface ProviderResult<T> { output: T; usage: Usage; model: string; pro
 
 export interface ArticleInput {
   title: string; excerpt: string | null; body: string | null; publisher: string | null; language: string; customTopics: CustomTopic[];
+  /** Kind of record; absent = news article. Social records are analysed as posts/comments, not as journalism. */
+  record?: RecordKind;
 }
+export interface RecordKind { category: 'news' | 'social'; platform: string | null; contentType: string | null }
 export interface MultiInput {
   scope: 'cluster' | 'project' | 'period' | 'issue'; language: string;
   records: Array<{ ref: string; publisher: string; published: string | null; title: string; excerpt: string | null; syndicated: boolean }>;

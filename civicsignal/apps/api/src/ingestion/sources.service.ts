@@ -15,6 +15,7 @@ import { enqueueCollect, jobIds, workerHeartbeats, type Redis } from './queue';
 import type { CredentialCipher } from './secrets';
 import type { CreateSourceDto, UpdateSourceDto } from './sources.dto';
 import { assertFetchableUrl, UnsafeUrlError } from './url';
+import { isSocialKind } from '../social/providers';
 
 const SOURCE_COLS = `s.id, s.name, s.domain, s.category, s.collection_method, s.feed_url, s.enabled, s.authorization_status,
   s.authorization_basis, s.verification_status, s.permitted_fields, s.permits_full_text, s.refresh_interval_seconds,
@@ -143,6 +144,7 @@ export class SourcesService {
     return this.db.withTenant(t.orgId, auth.userId, async (c) => {
       const cur = await this.loadRow(c, id);
       const kind = String(cur.kind);
+      if (isSocialKind(kind)) throw badRequest('use_social_api', 'Social connectors are configured through /social/connectors (provider limits apply there)');
       if (dto.feedUrl !== undefined && kind !== 'feed') throw badRequest('validation_failed', 'Only feed sources have a feedUrl');
       const feedUrl = dto.feedUrl !== undefined ? this.validateUrl(dto.feedUrl) : (cur.feed_url as string | null);
       const config = dto.connectorConfig !== undefined ? this.validateConnectorConfig(kind, dto.connectorConfig) : cur.config;

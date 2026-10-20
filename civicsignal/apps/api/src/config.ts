@@ -213,6 +213,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
     if (cfg.ai.provider === 'test') throw new Error('AI_PROVIDER=test is for automated tests only and is refused in production');
     if (cfg.ai.provider === 'anthropic' && !cfg.ai.anthropicApiKey) throw new Error('AI_PROVIDER=anthropic requires ANTHROPIC_API_KEY');
     if (cfg.alerts.webhookAllowHttp) throw new Error('ALERTS_WEBHOOK_ALLOW_HTTP is for tests only and is refused in production');
+    if (env.YOUTUBE_API_BASE_URL) throw new Error('YOUTUBE_API_BASE_URL is for contract tests only and is refused in production');
   }
   if (prod && appEnv !== 'local') {
     // Deployed environments (staging, production): TLS-only origins, shared Redis, no local-only shortcuts.

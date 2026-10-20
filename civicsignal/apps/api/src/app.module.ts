@@ -28,15 +28,19 @@ import { OrganizationsService } from './organizations/organizations.service';
 import { PlatformController } from './platform.controller';
 import { ProjectsController } from './projects/projects.controller';
 import { ProjectsService } from './projects/projects.service';
+import { SocialAnalyticsService } from './social/social-analytics';
+import { SocialController } from './social/social.controller';
+import { SocialService } from './social/social.service';
 
 @Module({
   imports: [DatabaseModule, IngestionCoreModule, AlertsCoreModule, ReportsCoreModule],
   controllers: [AuthController, OrganizationsController, InvitationsController, ProjectsController, AuditController, HealthController, PlatformController,
-    SourcesController, QueriesController, MentionsController, AnalysisController, IssuesController, AlertRulesController, AnalyticsController, ReportsController, GovernanceController],
+    SourcesController, QueriesController, MentionsController, AnalysisController, IssuesController, AlertRulesController, AnalyticsController, ReportsController, GovernanceController, SocialController],
   providers: [
     { provide: IDENTITY_PROVIDER, useClass: LocalIdentityProvider },
     AuditService, OrganizationsService, ProjectsService, SessionGuard, TenantGuard, RateLimitGuard, FailureThrottle, CounterStore,
     SourcesService, QueriesService, MentionsService, AnalysisApiService, IssuesService, RulesService, AnalyticsService, ReportsService, GovernanceService, RetentionService,
+    SocialService, SocialAnalyticsService,
   ],
 })
 export class AppModule {}

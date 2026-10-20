@@ -68,11 +68,22 @@ export function wrapUntrusted(text: string, attrs: Record<string, string> = {}):
 /** Upper bound on article text sent to a provider (cost and resource control); evidence checks still use the stored text. */
 export const MAX_PROVIDER_BODY_CHARS = 30_000;
 
-export function articleUserMessage(input: { title: string; excerpt: string | null; body: string | null; publisher: string | null; language: string; customTopics: CustomTopic[] }): string {
+/** Per-record guidance for social content (kept in the user message so the versioned system prompt is unchanged). */
+export function recordKindNote(r: { category: 'news' | 'social'; platform: string | null; contentType: string | null } | undefined): string {
+  if (!r || r.category === 'news') return '';
+  const what = r.contentType === 'comment' ? 'a public comment by an individual' : `a ${r.contentType ?? 'post'} published on the platform`;
+  return `Record type: ${what} on ${r.platform ?? 'a social platform'} (social media, not a news article). "Headline" is the post title or the ` +
+    `start of the comment. Sentiment means the author's expressed stance toward the main subject. Short texts, sarcasm, slang, emoji and ` +
+    `quoted or reposted speech are common: if the label depends on them, set uncertain=true. Commenters are private individuals: never list ` +
+    `them as entities. Engagement counts are not provided and must not be inferred.\n`;
+}
+
+export function articleUserMessage(input: { title: string; excerpt: string | null; body: string | null; publisher: string | null; language: string; customTopics: CustomTopic[];
+  record?: { category: 'news' | 'social'; platform: string | null; contentType: string | null } }): string {
   const taxonomy = [...DEFAULT_TOPICS.map((t) => `- ${t.key}: ${t.label} (${t.description})`),
     ...input.customTopics.map((t) => `- ${t.key}: ${t.label}${t.description ? ` (${t.description.slice(0, 200)})` : ''}`)].join('\n');
   const content = [`Headline: ${input.title}`, input.excerpt ? `Excerpt: ${input.excerpt}` : null, input.body ? `Body: ${input.body.slice(0, MAX_PROVIDER_BODY_CHARS)}` : null].filter(Boolean).join('\n');
-  return `Taxonomy version ${TAXONOMY_VERSION}. Allowed topic keys:\n${taxonomy}\n\nDetected language: ${input.language}.\n` +
+  return `Taxonomy version ${TAXONOMY_VERSION}. Allowed topic keys:\n${taxonomy}\n\nDetected language: ${input.language}.\n` + recordKindNote(input.record) +
     `Available text: ${input.body ? 'headline, excerpt and body' : input.excerpt ? 'headline and excerpt' : 'headline only'}.\n\n` +
     wrapUntrusted(content, { publisher: input.publisher ?? 'unknown' });
 }

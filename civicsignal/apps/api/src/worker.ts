@@ -22,9 +22,10 @@ import { CLOCK, type Clock } from './alerts/clock';
 import { ReportGenerator } from './reports/generator.service';
 import { AuditService } from './audit/audit.service';
 import { RetentionService, retentionTick } from './governance/retention.service';
+import { SocialLifecycleService, socialLifecycleTick } from './social/lifecycle.service';
 import { analyticsRefreshTick, createReportsWorker, ReportsCoreModule, ReportsEnqueuer, reportsSchedulerTick } from './reports/reports-queue';
 
-@Module({ imports: [DatabaseModule, IngestionCoreModule, AlertsCoreModule, ReportsCoreModule], providers: [AuditService, RetentionService] })
+@Module({ imports: [DatabaseModule, IngestionCoreModule, AlertsCoreModule, ReportsCoreModule], providers: [AuditService, RetentionService, SocialLifecycleService] })
 class WorkerModule {}
 
 /**
@@ -95,6 +96,14 @@ async function main() {
     catch (e) { logEvent('error', 'retention.scheduler_error', { message: (e as Error).message }); } finally { retentionTicking = false; }
   };
   const retentionScheduler = runScheduler ? setInterval(() => void retentionRun(), 15 * 60_000) : null;
+  // Provider refresh-or-delete obligations for social records (e.g. YouTube 30-day storage limit).
+  let lifecycleTicking = false;
+  const lifecycleRun = async () => {
+    if (lifecycleTicking) return; lifecycleTicking = true;
+    try { const r = await socialLifecycleTick(db, ctx.get(SocialLifecycleService)); if (r.purged || r.refreshed) logEvent('info', 'social.lifecycle', r); }
+    catch (e) { logEvent('error', 'social.lifecycle_error', { message: (e as Error).message }); } finally { lifecycleTicking = false; }
+  };
+  const lifecycleScheduler = runScheduler ? setInterval(() => void lifecycleRun(), 15 * 60_000) : null;
   const analyticsScheduler = runScheduler ? setInterval(() => void analyticsTick(), config.analytics.refreshIntervalMs) : null;
   const reportsScheduler = runScheduler ? setInterval(() => void reportsTick(), 60_000) : null;
   if (runScheduler) { void analyticsTick(); void reportsTick(); }
@@ -109,6 +118,7 @@ async function main() {
     if (analyticsScheduler) clearInterval(analyticsScheduler);
     if (reportsScheduler) clearInterval(reportsScheduler);
     if (retentionScheduler) clearInterval(retentionScheduler);
+    if (lifecycleScheduler) clearInterval(lifecycleScheduler);
     clearInterval(heartbeat);
     await consumer?.worker.close();   // waits for in-flight jobs
     await analysisWorker?.close();

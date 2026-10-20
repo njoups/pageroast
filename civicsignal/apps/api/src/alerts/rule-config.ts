@@ -20,6 +20,7 @@ export const RuleConfigSchema = z.object({
     sourceIds: z.array(uuid).max(50).default([]),
     topics: z.array(topicKey).max(20).default([]),
     keywords: z.string().trim().max(500).nullable().default(null),   // query-language expression
+    channels: z.array(z.enum(['news', 'social'])).min(1).max(2).default(['news']),  // social records only when chosen
   }).strict().prefault({}),
   window: z.object({
     minutes: z.number().int().min(15).max(10_080).default(60),

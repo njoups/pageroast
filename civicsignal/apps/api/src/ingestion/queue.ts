@@ -4,6 +4,7 @@ import IORedis from 'ioredis';
 import type { AppConfig } from '../config';
 import type { Database } from '../database/database.service';
 import { ConnectorError } from './connectors/connector';
+import { getConnector } from './connectors/registry';
 import { logEvent } from './log';
 import type { CollectJob, IngestionPipeline } from './pipeline.service';
 
@@ -128,7 +129,8 @@ export function createWorker(deps: WorkerDeps): { worker: Worker<CollectJob>; dl
   const redis = createRedis(config.redisUrl!);
   const worker = new Worker<CollectJob>(QUEUE, async (job: Job<CollectJob>, token?: string) => {
     const info = await gateInfo(deps.db, job.data);
-    const host = info ? (info.kind === 'gdelt' ? 'api.gdeltproject.org' : info.feed_url ? new URL(info.feed_url).hostname.toLowerCase() : null) : null;
+    const apiHost = info ? getConnector(info.kind)?.apiHost : undefined;
+    const host = info ? (info.kind === 'gdelt' ? 'api.gdeltproject.org' : apiHost ?? (info.feed_url ? new URL(info.feed_url).hostname.toLowerCase() : null)) : null;
     const lockToken = randomUUID();
     const gate = info
       ? await acquireGates({ redis, config }, job.data.sourceId, host, { perMinute: info.rate_limit_per_minute, perDay: info.quota_per_day }, lockToken)

@@ -23,6 +23,8 @@ export interface AnalyticsParams {
   from?: string; to?: string; days?: number;
   projectId?: string; entityId?: string; topic?: string; sourceId?: string; language?: string; sentiment?: string; issueStatus?: string;
   granularity?: Granularity; entityIds?: string[]; limit?: number; offset?: number;
+  /** news (default) = articles only; social = social-platform records only; all = both, explicitly. */
+  channel?: 'news' | 'social' | 'all';
 }
 export interface Viewer { tenantId: string; userId: string; role: Role }
 export interface Scope {
@@ -66,6 +68,10 @@ function conds(p: Params, s: Scope, from: Date, to: Date, o: { allRecords?: bool
     `EXISTS (SELECT 1 FROM mention_matches mm WHERE mm.mention_id = m.id AND mm.project_id = ANY(${p.add(s.projects)}::uuid[]))`];
   if (!o.allRecords) w.push(`m.duplicate_status = 'original'`);
   const q = s.q;
+  // News and social records are never combined silently: executive analytics default to news articles.
+  const channel = q.channel ?? 'news';
+  if (channel === 'news') w.push('m.platform IS NULL');
+  else if (channel === 'social') w.push('m.platform IS NOT NULL');
   if (q.sourceId) w.push(`m.source_id = ${p.add(q.sourceId)}`);
   if (q.language) w.push(`${LANG_EXPR} = ${p.add(q.language)}`);
   if (q.topic) w.push(`EXISTS (SELECT 1 FROM mention_topics mt WHERE mt.mention_id = m.id AND mt.analysis_id = m.analysis_id AND mt.topic_key = ${p.add(q.topic)})`);
@@ -164,7 +170,7 @@ async function coverageTimeline(c: PoolClient, s: Scope, stamp: Stamp, expectArt
   const hourAligned = s.from.getTime() % 3_600_000 === 0 && s.to.getTime() % 3_600_000 === 0
     && tzOffset(s.from.getTime(), s.tz) % 3_600_000 === 0 && tzOffset(s.to.getTime(), s.tz) % 3_600_000 === 0;
   const aggCurrent = stamp.aggregatesCurrent;
-  const useAgg = s.projects.length === 1 && !q.entityId && !q.topic && hourAligned && aggCurrent;
+  const useAgg = s.projects.length === 1 && !q.entityId && !q.topic && hourAligned && aggCurrent && (q.channel ?? 'news') === 'news'; // aggregate holds news only
   const p = new Params();
   let rows: Array<{ bucket: string; articles: number; records: number }>;
   if (useAgg) {

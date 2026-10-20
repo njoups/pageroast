@@ -26,6 +26,7 @@ export class AnalyticsQuery implements E.AnalyticsParams {
   @IsArray() @ArrayMaxSize(10) @IsUUID('all', { each: true }) entityIds?: string[];
   @IsOptional() @Type(() => Number) @IsInt() @Min(1) @Max(100) limit?: number;
   @IsOptional() @Type(() => Number) @IsInt() @Min(0) @Max(10_000) offset?: number;
+  @IsOptional() @IsIn(['news', 'social', 'all']) channel?: 'news' | 'social' | 'all';
 }
 
 const METRICS = {

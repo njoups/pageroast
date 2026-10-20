@@ -3,7 +3,7 @@ import { Transform, Type } from 'class-transformer';
 import { ArrayMaxSize, IsArray, IsBoolean, IsIn, IsInt, IsObject, IsOptional, IsString, Max, MaxLength, Min, MinLength } from 'class-validator';
 
 const trim = ({ value }: { value: unknown }) => (typeof value === 'string' ? value.trim() : value);
-export const PERMITTED_FIELDS = ['title', 'url', 'published_at', 'excerpt', 'author', 'categories'] as const;
+export const PERMITTED_FIELDS = ['title', 'url', 'published_at', 'excerpt', 'author', 'categories', 'metrics'] as const;
 export const AUTH_STATUSES = ['unverified', 'authorized', 'restricted', 'revoked'] as const;
 
 export class SourceFieldsDto {

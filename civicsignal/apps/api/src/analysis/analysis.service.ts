@@ -1,3 +1,4 @@
+import { derivedAnalysisAllowed } from '../social/rights';
 import { createHash } from 'node:crypto';
 import { Inject, Injectable } from '@nestjs/common';
 import type { PoolClient } from 'pg';
@@ -26,8 +27,12 @@ export type AnalyzeOutcome = 'succeeded' | 'partial' | 'skipped' | 'quota_exceed
 
 interface MentionRow {
   id: string; title: string; excerpt: string | null; body: string | null; language: string | null; publisher: string | null;
-  duplicate_status: string;
+  duplicate_status: string; platform: string | null; content_type: string | null;
+  rights: { derivedAnalysis?: string } | null; derived_analysis_approved_at: Date | null;
 }
+
+/** Social posts shorter than this (title + text) are analysed but marked short_text and their tone uncertain. */
+export const SHORT_TEXT_CHARS = 40;
 
 @Injectable()
 export class AnalysisService {
@@ -56,7 +61,12 @@ export class AnalysisService {
            OR (status = 'running' AND finished_at IS NULL AND (attempt < $2 OR started_at < now() - interval '15 minutes')))
          RETURNING mention_id`, [analysisId, attempt])).rows[0];
       if (!claimed) return null;
-      const m = (await c.query<MentionRow>('SELECT id, title, excerpt, body, language, publisher, duplicate_status FROM mentions WHERE id = $1', [claimed.mention_id])).rows[0]!;
+      const m = (await c.query<MentionRow>(
+        `SELECT m.id, m.title, m.excerpt, m.body, m.language, m.publisher, m.duplicate_status, m.platform, m.content_type, k.rights, k.derived_analysis_approved_at
+         FROM mentions m LEFT JOIN connectors k ON k.source_id = m.source_id WHERE m.id = $1`, [claimed.mention_id])).rows[0]!;
+      // Every analysis records what kind of record it was computed from (news article vs social post/comment).
+      await c.query(`UPDATE mention_analyses SET source_category = $2, platform = $3, content_type = $4 WHERE id = $1`,
+        [analysisId, m.platform ? 'social' : 'news', m.platform, m.content_type ?? (m.platform ? null : 'article')]);
       const q = await quotaState(c);
       const custom = (await c.query<CustomTopic>(
         `SELECT DISTINCT pt.id, pt.key, pt.label, pt.description, pt.keywords FROM project_topics pt
@@ -68,6 +78,13 @@ export class AnalysisService {
     const { m, q, custom } = prep;
     const stages: Record<string, string> = {};
 
+    // Provider terms first: no derived data from records whose provider forbids it or requires an approval not recorded.
+    if (!derivedAnalysisAllowed({ rights: m.rights, derived_analysis_approved_at: m.derived_analysis_approved_at })) {
+      await this.finish(tenantId, analysisId, m.id, 'skipped', { stages: { rights: `not_permitted:${m.rights?.derivedAnalysis ?? 'unknown'}` }, contentStatus: 'not_permitted' });
+      return { outcome: 'skipped' };
+    }
+    const record = { category: (m.platform ? 'social' : 'news') as 'news' | 'social', platform: m.platform, contentType: m.content_type };
+
     // Quotas are checked when work starts (the authoritative moment), not only at enqueue time.
     if (q.analysesToday >= q.dailyMentionLimit || (this.provider.method !== 'baseline' && q.tokensThisMonth >= q.monthlyTokenLimit)) {
       await this.finish(tenantId, analysisId, m.id, 'quota_exceeded', { stages: { quota: q.analysesToday >= q.dailyMentionLimit ? 'daily_mention_limit_reached' : 'monthly_token_limit_reached' } });
@@ -78,7 +95,9 @@ export class AnalysisService {
     const text = [m.title, m.excerpt ?? '', m.body ?? ''].join('\n');
     const lang = resolveLanguage(text, m.language);
     stages.language = `${lang.language}:${lang.method}`;
-    const contentStatus = !lang.supported ? 'unsupported_language' : m.body || (m.excerpt && m.excerpt.length >= 60) ? 'ok' : 'headline_only';
+    const shortSocial = record.category === 'social' && `${m.title} ${m.excerpt ?? ''}`.trim().length < SHORT_TEXT_CHARS;
+    const contentStatus = !lang.supported ? 'unsupported_language' : shortSocial ? 'short_text'
+      : record.category === 'social' ? 'ok' : m.body || (m.excerpt && m.excerpt.length >= 60) ? 'ok' : 'headline_only';
     if (!lang.supported) {
       stages.validate = 'skipped:unsupported_language';
       await this.finish(tenantId, analysisId, m.id, 'skipped', { stages, lang, contentStatus });
@@ -90,7 +109,7 @@ export class AnalysisService {
     // 3–6. Entities, topics, sentiment, summary (one structured provider call)
     let result: ProviderResult<ArticleAnalysis>; let used = this.provider; let fallbackReason: string | null = null;
     try {
-      result = await this.provider.analyzeArticle({ title: m.title, excerpt: m.excerpt, body: m.body, publisher: m.publisher, language: lang.language, customTopics: custom });
+      result = await this.provider.analyzeArticle({ title: m.title, excerpt: m.excerpt, body: m.body, publisher: m.publisher, language: lang.language, customTopics: custom, record });
     } catch (e) {
       const err = e instanceof ProviderError ? e : new ProviderError('network', (e as Error).message);
       if (err.retryable && !isFinalAttempt) {
@@ -106,7 +125,7 @@ export class AnalysisService {
       }
       fallbackReason = `${err.kind}: ${err.message}`;
       used = this.fallback;
-      result = await this.fallback.analyzeArticle({ title: m.title, excerpt: m.excerpt, body: m.body, publisher: m.publisher, language: lang.language, customTopics: custom });
+      result = await this.fallback.analyzeArticle({ title: m.title, excerpt: m.excerpt, body: m.body, publisher: m.publisher, language: lang.language, customTopics: custom, record });
       logEvent('warn', 'analysis.fallback_used', { tenantId, analysisId, reason: err.kind });
     }
     stages.provider = fallbackReason ? `fallback:${used.name}` : used.name;
@@ -114,7 +133,7 @@ export class AnalysisService {
     // Output is untrusted: verify every quote against the source text, drop what cannot be verified.
     const allowedTopics = new Set([...TOPIC_KEYS, ...custom.map((t) => t.key)]);
     const { analysis, report } = sanitizeArticleAnalysis(result.output, text, allowedTopics);
-    if (contentStatus === 'headline_only') analysis.sentiment.uncertain = analysis.sentiment.uncertain || analysis.sentiment.label !== 'neutral';
+    if (contentStatus === 'headline_only' || contentStatus === 'short_text') analysis.sentiment.uncertain = analysis.sentiment.uncertain || analysis.sentiment.label !== 'neutral';
     stages.entities = `${analysis.entities.length}`; stages.topics = analysis.topics.map((t) => t.key).join(',');
     stages.sentiment = analysis.sentiment.label; stages.summary = analysis.summary.status;
 

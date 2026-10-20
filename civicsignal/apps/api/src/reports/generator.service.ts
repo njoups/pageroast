@@ -200,7 +200,7 @@ export class ReportGenerator {
   }
   private readonly COLS = `m.id, m.title, m.publisher, m.publisher_domain, m.url, m.published_at, s.attribution_requirement`;
   private where(s: E.Scope) {
-    return { sql: `${E.T_EXPR} >= $1 AND ${E.T_EXPR} < $2 AND m.duplicate_status = 'original'
+    return { sql: `${E.T_EXPR} >= $1 AND ${E.T_EXPR} < $2 AND m.duplicate_status = 'original' AND m.platform IS NULL
       AND EXISTS (SELECT 1 FROM mention_matches mm WHERE mm.mention_id = m.id AND mm.project_id = $3)
       AND ($4::text IS NULL OR EXISTS (SELECT 1 FROM mention_topics mt WHERE mt.mention_id = m.id AND mt.analysis_id = m.analysis_id AND mt.topic_key = $4))
       AND ($5::uuid IS NULL OR m.source_id = $5) AND ($6::text IS NULL OR ${E.LANG_EXPR} = $6)`,

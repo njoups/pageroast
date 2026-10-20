@@ -16,6 +16,10 @@ export async function loadPopulation(c: PoolClient, projectId: string, f: RuleCo
   const where = [`m.duplicate_status = 'original'`, `${T} > $2`, `${T} <= $3`,
     `EXISTS (SELECT 1 FROM mention_matches mm WHERE mm.mention_id = m.id AND mm.project_id = $1)`];
   if (f.sourceIds.length) where.push(`m.source_id = ANY(${add(f.sourceIds)}::uuid[])`);
+  // Channels: news articles and/or social records (rules default to news; baselines come from the same population).
+  const ch = f.channels ?? ['news'];
+  if (!ch.includes('social')) where.push('m.platform IS NULL');
+  else if (!ch.includes('news')) where.push('m.platform IS NOT NULL');
   if (f.entityIds.length) where.push(`EXISTS (SELECT 1 FROM mention_entities me WHERE me.mention_id = m.id AND me.analysis_id = m.analysis_id AND me.entity_id = ANY(${add(f.entityIds)}::uuid[]))`);
   if (f.topics.length) where.push(`EXISTS (SELECT 1 FROM mention_topics mt WHERE mt.mention_id = m.id AND mt.analysis_id = m.analysis_id AND mt.topic_key = ANY(${add(f.topics)}::text[]))`);
   const r = await c.query<{ id: string; t: string; publisher_domain: string; source_id: string; cluster_id: string | null; title: string; excerpt: string | null;
@@ -70,13 +74,13 @@ export async function refreshActivity(c: PoolClient, tenantId: string, from: Dat
        count(DISTINCT m.id) FILTER (WHERE sr.uncertain)
      FROM mentions m JOIN mention_matches mm ON mm.mention_id = m.id
      LEFT JOIN sentiment_results sr ON sr.analysis_id = m.analysis_id AND sr.target_type = 'article'
-     WHERE m.duplicate_status = 'original' AND ${T} >= date_trunc('hour', $2::timestamptz) AND ${T} <= $3
+     WHERE m.duplicate_status = 'original' AND m.platform IS NULL AND ${T} >= date_trunc('hour', $2::timestamptz) AND ${T} <= $3
      GROUP BY mm.project_id, date_trunc('hour', ${T})`, [tenantId, from, to]);
   await c.query(`DELETE FROM topic_activity_daily WHERE day >= ($1::timestamptz AT TIME ZONE 'UTC')::date AND day <= ($2::timestamptz AT TIME ZONE 'UTC')::date`, [from, to]);
   await c.query(
     `INSERT INTO topic_activity_daily (tenant_id, project_id, day, topic_key, mentions, publishers)
      SELECT $1, mm.project_id, (${T} AT TIME ZONE 'UTC')::date, mt.topic_key, count(DISTINCT m.id), count(DISTINCT m.publisher_domain)
      FROM mentions m JOIN mention_matches mm ON mm.mention_id = m.id JOIN mention_topics mt ON mt.mention_id = m.id AND mt.analysis_id = m.analysis_id
-     WHERE m.duplicate_status = 'original' AND ${T} >= (($2::timestamptz AT TIME ZONE 'UTC')::date)::timestamp AT TIME ZONE 'UTC' AND ${T} <= $3
+     WHERE m.duplicate_status = 'original' AND m.platform IS NULL AND ${T} >= (($2::timestamptz AT TIME ZONE 'UTC')::date)::timestamp AT TIME ZONE 'UTC' AND ${T} <= $3
      GROUP BY mm.project_id, (${T} AT TIME ZONE 'UTC')::date, mt.topic_key`, [tenantId, from, to]);
 }

@@ -25,6 +25,11 @@ export class MentionsQuery {
   @IsOptional() @IsUUID() entityId?: string;
   @IsOptional() @IsIn(['positive', 'negative', 'neutral', 'mixed', 'unknown']) sentiment?: string;
   @IsOptional() @IsUUID() clusterId?: string;
+  /** news = articles from feeds and news providers; social = social-platform records; omitted = both. */
+  @IsOptional() @IsIn(['news', 'social', 'all']) channel?: 'news' | 'social' | 'all';
+  @IsOptional() @Matches(/^[a-z][a-z0-9_]{1,30}$/) platform?: string;
+  @IsOptional() @IsIn(['video', 'short_video', 'live_stream', 'post', 'comment']) contentType?: string;
+  @IsOptional() @Transform(({ value }) => (typeof value === 'string' ? value.replace(/^#/, '').toLowerCase() : value)) @Matches(/^[\p{L}\p{N}_]{2,100}$/u) hashtag?: string;
 }
 
 const ITEM_COLS = `m.id, m.title, m.url, m.canonical_url, m.publisher, m.publisher_domain, m.excerpt, m.author, m.categories, m.language,
@@ -33,6 +38,8 @@ const ITEM_COLS = `m.id, m.title, m.url, m.canonical_url, m.publisher, m.publish
   m.provenance->'licence'->>'attribution' AS attribution, m.provenance->'licence'->>'redistributionRestrictions' AS redistribution_restrictions,
   m.provenance->>'connector' AS connector, m.provenance->>'runId' AS run_id, m.provenance->>'gdeltSeenAt' AS gdelt_seen_at,
   m.detected_language, m.cluster_id,
+  m.platform, m.content_type, m.external_id, m.parent_external_id, m.hashtags, m.engagement, m.engagement_observed_at, m.provider_delete_by,
+  CASE WHEN m.platform IS NULL THEN 'news' ELSE 'social' END AS channel,
   (SELECT jsonb_build_object('label', sr.label, 'confidence', sr.confidence, 'uncertain', sr.uncertain, 'method', sr.method)
      FROM sentiment_results sr WHERE sr.analysis_id = m.analysis_id AND sr.target_type = 'article' LIMIT 1) AS sentiment,
   coalesce((SELECT jsonb_agg(mt.topic_key ORDER BY mt.confidence DESC) FROM mention_topics mt WHERE mt.analysis_id = m.analysis_id AND mt.topic_key <> 'unknown'), '[]'::jsonb) AS topics`;
@@ -64,6 +71,11 @@ export class MentionsService {
       if (f.sentiment) where.push(`EXISTS (SELECT 1 FROM sentiment_results sr WHERE sr.mention_id = m.id AND sr.analysis_id = m.analysis_id AND sr.target_type = 'article' AND sr.label = ${add(f.sentiment)})`);
       if (f.clusterId) where.push(`m.cluster_id = ${add(f.clusterId)}`);
       if (f.language) where.push(`m.language = ${add(f.language)}`);
+      if (f.channel === 'news') where.push('m.platform IS NULL');
+      if (f.channel === 'social') where.push('m.platform IS NOT NULL');
+      if (f.platform) where.push(`m.platform = ${add(f.platform)}`);
+      if (f.contentType) where.push(`m.content_type = ${add(f.contentType)}`);
+      if (f.hashtag) where.push(`m.hashtags @> ARRAY[${add(f.hashtag)}]::text[]`);
       const dateCol = f.dateField === 'published' ? 'm.published_at' : 'm.discovered_at';
       if (f.from) where.push(`${dateCol} >= ${add(f.from)}::timestamptz`);
       if (f.to) where.push(`${dateCol} <= ${add(f.to)}::timestamptz`);

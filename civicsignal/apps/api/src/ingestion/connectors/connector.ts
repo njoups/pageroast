@@ -8,8 +8,19 @@ export type ConnectorErrorKind =
 
 const RETRYABLE = new Set<ConnectorErrorKind>(['network', 'timeout', 'server', 'rate_limited']);
 
+/** Provider requests and quota consumed by one connector operation, per provider quota bucket. */
+export interface UsageReport {
+  buckets: Record<string, { requests: number; units: number }>;
+  rateLimited: number;
+}
+export const emptyUsage = (): UsageReport => ({ buckets: {}, rateLimited: 0 });
+export function addUsage(u: UsageReport, bucket: string, units = 1) {
+  const b = (u.buckets[bucket] ??= { requests: 0, units: 0 });
+  b.requests++; b.units += units;
+}
+
 export class ConnectorError extends Error {
-  constructor(readonly kind: ConnectorErrorKind, message: string, readonly opts: { httpStatus?: number; retryAfterMs?: number } = {}) {
+  constructor(readonly kind: ConnectorErrorKind, message: string, readonly opts: { httpStatus?: number; retryAfterMs?: number; usage?: UsageReport; resumeAt?: Date } = {}) {
     super(message);
     this.name = 'ConnectorError';
   }
@@ -30,6 +41,18 @@ export interface RawRecord {
   language: string | null;
   publisher: string | null;
   extra?: Record<string, unknown>;          // connector-specific provenance (e.g. GDELT seen date)
+  social?: SocialFields;                     // present only for social-platform records
+}
+
+/** Platform fields of a social record. Only what the provider returned; nothing is estimated or filled in. */
+export interface SocialFields {
+  platform: string;
+  contentType: 'video' | 'short_video' | 'live_stream' | 'post' | 'comment';
+  externalId: string;
+  parentExternalId: string | null;
+  authorRef: string | null;                  // provider account/channel id (stored only when 'author' is a permitted field)
+  hashtags: string[];
+  engagement: Record<string, number>;        // provider metric name → value, as returned
 }
 
 export interface FetchContext<C> {
@@ -48,16 +71,31 @@ export interface FetchResult {
   rejected: Array<{ index: number; reason: string }>;
   cache: { etag: string | null; lastModified: string | null; validUntil: Date | null };
   meta: { title: string | null; language: string | null; format: string };
+  usage?: UsageReport;
+}
+
+export interface RefreshResult {
+  records: RawRecord[];                      // still available: current text and metrics
+  missing: string[];                         // external ids the provider no longer returns (deleted, private, removed)
+  usage: UsageReport;
 }
 
 export interface Connector<C = unknown> {
-  readonly kind: 'feed' | 'gdelt';
+  readonly kind: 'feed' | 'gdelt' | 'youtube';
   readonly version: string;
   readonly requiresCredentials: boolean;
   readonly requiresUrl: boolean;
+  /** Provider API host, for per-host politeness spacing (feeds use their feed URL's host). */
+  readonly apiHost?: string;
   /** Throws ConnectorError('unconfigured') with a human-readable message when config is invalid. */
   validateConfig(raw: unknown): C;
   fetch(ctx: FetchContext<C>): Promise<FetchResult>;
+  /** Upper bound of quota one sync with this config may consume, per bucket (checked before a sync starts). */
+  estimateSyncUsage?(config: C): Record<string, number>;
+  /** Re-reads stored records by provider id (refresh-or-delete obligations). */
+  refresh?(ctx: FetchContext<C>, items: Array<{ externalId: string; contentType: string }>): Promise<RefreshResult>;
+  /** Cheapest authorized call that proves the credentials work. */
+  testConnection?(ctx: FetchContext<C>): Promise<{ detail: string; usage: UsageReport }>;
 }
 
 /** Maps HTTP status codes to the connector error taxonomy. Never retries 401/403: we do not work around access control. */
