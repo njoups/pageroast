@@ -31,7 +31,7 @@ const SalesSchema = z.object({
 }).strict();
 const StepSchema = z.object({ status: z.enum(['done', 'skipped', 'todo']) }).strict();
 
-export const planOut = (p: Record<string, any>) => ({
+export const planOut = (p: Record<string, any>) => ({ // eslint-disable-line @typescript-eslint/no-explicit-any -- raw pg row
   code: p.code, name: p.name, category: p.category, description: p.description, versionId: p.id, version: p.version,
   price: p.price_amount === null ? null : { amount: Number(p.price_amount), currency: p.currency, interval: p.billing_interval },
   priceStatus: p.price_amount === null ? 'contact_sales' : 'listed', billingInterval: p.billing_interval, trialDays: p.trial_days,

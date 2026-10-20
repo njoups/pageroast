@@ -14,5 +14,6 @@ export const NAV: NavItem[] = [
   { slug: 'projects', label: 'Projects', available: true, summary: 'Monitoring projects' },
   { slug: 'team', label: 'Team', available: true, summary: 'Members, roles and invitations' },
   { slug: 'admin', label: 'Administration', available: true, summary: 'Organization settings and audit log' },
-  { slug: 'billing', label: 'Billing', available: false, milestone: 'Milestone 6', summary: 'Subscription plan, usage metering and per-tenant quotas.' },
+  { slug: 'billing', label: 'Billing & usage', available: true, summary: 'Subscription plan, usage against plan limits, invoices and contract information.' },
+  { slug: 'getting-started', label: 'Getting started', available: true, summary: 'Guided setup with saved progress.' },
 ];

@@ -123,7 +123,7 @@ export async function invoiceDetail(c: PoolClient, tenantId: string, id: string)
     payments: payments.map((p) => ({ id: p.id, amount: Number(p.amount), currency: p.currency, method: p.method, reference: p.reference, receivedAt: p.received_at, source: p.source })) };
 }
 
-export function invoiceOut(r: Record<string, any>) {
+export function invoiceOut(r: Record<string, any>) { // eslint-disable-line @typescript-eslint/no-explicit-any -- raw pg row
   return {
     id: r.id, number: r.number, status: r.status, source: r.source, provider: r.provider, currency: r.currency,
     subtotal: Number(r.subtotal), taxAmount: Number(r.tax_amount), total: Number(r.total), amountPaid: Number(r.amount_paid), balance: Math.round((Number(r.total) - Number(r.amount_paid)) * 100) / 100,

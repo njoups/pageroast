@@ -15,7 +15,7 @@ import { tenantCostSummary } from './costs';
 import { createDraftInvoice, invoiceDetail, invoiceOut, InvoiceInput, issueInvoice, PaymentInput, recordPayment, voidInvoice } from './invoices';
 import { allowedEvents, lockSubscription, transition, type Actor, type SubEvent } from './lifecycle';
 import { correctUsage, loadEntitlements, reconcileAggregates, usageSummary } from './quota';
-import { assignPlan, changePlanNow, currentVersion, scheduleChange, setCancelAtPeriodEnd, versionById } from './subscriptions';
+import { assignPlan, changePlanNow, currentVersion, scheduleChange, setCancelAtPeriodEnd } from './subscriptions';
 import { planOut } from './billing-api';
 
 const parse = <T>(schema: z.ZodType<T>, body: unknown): T => {
@@ -84,7 +84,7 @@ export class PlatformCommercialService {
     await this.tenantExists(tenantId);
     return this.db.withTenant(tenantId, a.userId, async (c) => {
       const out = await fn(c, { type: 'platform_admin', userId: a.userId, reason });
-      await this.audit.record(c, { tenantId, actorUserId: a.userId, action: `commercial.${action}`, targetType: target.type, targetId: target.id ?? (out as any)?.id ?? null, metadata: { ...metadata, reason, platformAdmin: true }, meta: m });
+      await this.audit.record(c, { tenantId, actorUserId: a.userId, action: `commercial.${action}`, targetType: target.type, targetId: target.id ?? (out as any)?.id ?? null, metadata: { ...metadata, reason, platformAdmin: true }, meta: m }); // eslint-disable-line @typescript-eslint/no-explicit-any -- generic audit target
       return out;
     });
   }

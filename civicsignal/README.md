@@ -13,6 +13,10 @@ budget and data-rights controls, contract-tested against a mock API but **not ve
 [docs/SOCIAL_CONNECTORS.md](docs/SOCIAL_CONNECTORS.md). Without `ANTHROPIC_API_KEY`, analysis uses a
 rule-based baseline, labelled as such, whose tone estimates are weak; the AI-model adapter has not yet been verified against the
 live API. Email has been verified against a local SMTP server only; WhatsApp is an unconfigured adapter.
+Commercial layer (2026-10-20): versioned plans (seeded without prices), subscriptions, an idempotent usage ledger, quotas, contract and
+manual invoicing, a billing page and a platform console. **No live payment provider** is integrated (default `BILLING_PROVIDER=none`), and
+invoices are not tax invoices; see [docs/BILLING_AND_SUBSCRIPTIONS.md](docs/BILLING_AND_SUBSCRIPTIONS.md) and
+[docs/COMMERCIAL_OPERATIONS_RUNBOOK.md](docs/COMMERCIAL_OPERATIONS_RUNBOOK.md).
 Current, evidence-based status: [docs/IMPLEMENTATION_STATUS.md](docs/IMPLEMENTATION_STATUS.md). Connectors: [docs/CONNECTORS.md](docs/CONNECTORS.md).
 
 - Plan and milestone status: [docs/IMPLEMENTATION_PLAN.md](docs/IMPLEMENTATION_PLAN.md)

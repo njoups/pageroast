@@ -65,6 +65,7 @@ function Shell({ children }: { children: ReactNode }) {
               );
             })}
           </nav>
+          {me.user.isPlatformAdmin && <Link href="/platform" className="mx-3 mb-2 rounded-md px-3 py-2 text-sm text-brand-100 hover:bg-white/10">Platform console</Link>}
           <p className="px-5 py-4 text-[11px] leading-snug text-brand-100">Identity: {me.identityProvider.name} adapter · MFA {me.identityProvider.mfa ? 'on' : 'not available'}</p>
         </aside>
         <div className="flex min-w-0 flex-1 flex-col">

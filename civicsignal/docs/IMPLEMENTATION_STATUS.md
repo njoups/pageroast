@@ -166,7 +166,7 @@ Details, provider capability matrix, data rights and limits: [SOCIAL_CONNECTORS.
 - **Conditional GET:** a 304 has been verified only against the local test server. Live feeds changed every minute or sent no ETag.
 
 ## Missing
-Entity/summary/clustering quality evaluation, report branding beyond colour (logo upload), PDF/UA tagging (accessible PDF structure), analyst annotations (UI area reserved; no storage yet), billing/metering enforcement,
+Entity/summary/clustering quality evaluation, report branding beyond colour (logo upload), PDF/UA tagging (accessible PDF structure), analyst annotations (UI area reserved; no storage yet), 
 tenant data export, MFA (needs an IdP), staging/production infrastructure, break-glass support access, social connectors other than
 YouTube, live verification of any social provider, social connectors, licensed-provider connector.
 
@@ -361,3 +361,23 @@ now in the config), and a real calibration issue from live data (60-day `max-age
 
 **Still blocking production** (PRODUCTION_READINESS_ASSESSMENT.md): an OIDC identity provider with enforced MFA, staging with
 PITR, an external penetration test, and legal review.
+
+
+## Prompt 08: commercialization, subscriptions and billing
+Implemented: see [BILLING_AND_SUBSCRIPTIONS.md](BILLING_AND_SUBSCRIPTIONS.md) and [USAGE_METERING.md](USAGE_METERING.md).
+- Configurable, versioned plans (seeded **without prices**); features separate from quotas; per-tenant overrides with reasons.
+- A server-side subscription state machine with history, plus scheduler jobs for:
+  - trial expiry, past-due grace and suspension;
+  - scheduled changes, period renewal, contract terms and overdue invoices.
+- An idempotent, append-only usage ledger with period and daily aggregates, corrections and reconciliation.
+- Hard and soft quotas enforced in API routes and workers under concurrency. Threshold notices at 70/85/95/100 %.
+- Contract and manual invoicing with payment reconciliation. Invoices are labelled "not a Faktur Pajak".
+- A payment-provider interface with `none` (default) and a `test` simulator, refused in production. Webhooks are signature-verified, replay-safe and logged.
+- A customer billing page, persistent onboarding (`/o/:id/getting-started`), and the platform console (`/platform`) for plans, organizations, contracts, invoices, costs and margin, health, sales requests and the commercial audit.
+
+**Not implemented:**
+- a live payment provider;
+- tax invoices (e-Faktur);
+- a public API (`api_access`);
+- proration;
+- automatic enforcement of plan retention limits.

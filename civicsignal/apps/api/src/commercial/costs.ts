@@ -19,7 +19,7 @@ export async function tenantCostSummary(c: PoolClient, from: string, to: string)
   const revenue = (await c.query(`SELECT tenant_id, currency, sum(amount) AS amount FROM payments WHERE received_at >= $1::date AND received_at < $2::date + 1 GROUP BY 1, 2`, [from, to])).rows;
   const tenants = (await c.query<{ id: string; name: string; plan_code: string | null; status: string | null }>(`SELECT t.id, t.name, s.plan_code, s.status FROM tenants t
       LEFT JOIN subscriptions s ON s.tenant_id = t.id AND s.ended_at IS NULL ORDER BY t.name`)).rows;
-  const money = (rows: any[], id: string) => rows.filter((r) => r.tenant_id === id).map((r) => ({ currency: r.currency, amount: Number(r.amount ?? r.cost ?? 0) }));
+  const money = (rows: any[], id: string) => rows.filter((r) => r.tenant_id === id).map((r) => ({ currency: r.currency, amount: Number(r.amount ?? r.cost ?? 0) })); // eslint-disable-line @typescript-eslint/no-explicit-any -- raw pg rows
   const out = tenants.map((t) => {
     const aiRows = ai.filter((r) => r.tenant_id === t.id);
     const est = aiRows.filter((r) => r.currency).map((r) => ({ currency: r.currency as string, amount: Math.round(Number(r.cost) * 10_000) / 10_000 }));

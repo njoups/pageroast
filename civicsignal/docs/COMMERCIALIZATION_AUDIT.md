@@ -51,3 +51,14 @@
 - **Faktur Pajak / e-Faktur:** needs a tax consultant and integration with the DJP system.
 - **Public API keys:** an `api_access` entitlement is defined but no API-key feature exists, so it is shown as "not available".
 - **White-label logos:** `white_label_reports` gates the existing brand colour only.
+
+## 5. Outcome (implemented in this milestone)
+The decisions in section 3 were implemented and verified by automated tests against PostgreSQL (`test/integration/commercial.e2e.ts`, `test/unit/commercial/`):
+- migration 0013;
+- the commercial services and enforcement points;
+- the tenant billing, onboarding and platform APIs;
+- the billing page, getting-started page and platform console.
+
+Details: [BILLING_AND_SUBSCRIPTIONS.md](BILLING_AND_SUBSCRIPTIONS.md), [USAGE_METERING.md](USAGE_METERING.md), [COMMERCIAL_OPERATIONS_RUNBOOK.md](COMMERCIAL_OPERATIONS_RUNBOOK.md).
+
+Still open: the items in section 4. In addition, plan-level retention and audit-retention limits are informational and not enforced.
