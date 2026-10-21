@@ -1,0 +1,52 @@
+# Production/staging edge for a single-host deployment (infra/compose.production.yml). See docs/DEPLOYMENT.md.
+#
+# PUBLIC_DOMAIN is the operator's real domain (no default: the stack refuses to start without it). Caddy obtains and
+# renews the certificate itself (ACME), so ports 80 and 443 must reach this host and the DNS A/AAAA record must
+# already point here; HTTP is redirected to HTTPS automatically. When TLS terminates at a cloud load balancer instead,
+# set PUBLIC_DOMAIN=http://:80 so this edge serves only the private LB hop (the LB must then send HSTS and redirect).
+{
+	email {$ACME_EMAIL}
+	# No admin API at all: configuration changes are applied by restarting the edge container.
+	admin off
+	servers {
+		timeouts {
+			read_header 10s
+			idle 2m
+		}
+	}
+}
+
+{$PUBLIC_DOMAIN} {
+	# Bodies above 2 MB are refused before they reach the application (JSON APIs only; no file uploads).
+	request_body {
+		max_size 2MB
+	}
+
+	header {
+		# One year, subdomains included. Add "preload" only after the domain owner decides to submit it.
+		Strict-Transport-Security "max-age=31536000; includeSubDomains"
+		X-Content-Type-Options "nosniff"
+		Referrer-Policy "strict-origin-when-cross-origin"
+		X-Frame-Options "DENY"
+		Permissions-Policy "camera=(), microphone=(), geolocation=()"
+		-Server
+		-X-Powered-By
+	}
+
+	# Internal endpoints are never public. The web app only proxies /api/v1/*, so these paths cannot reach the API
+	# anyway; refusing them here makes that explicit and keeps it true if routing changes.
+	@internal path /metrics /metrics/* /health/* /api/docs /api/docs/* /api-json
+	respond @internal 404
+
+	# Caddy replaces X-Forwarded-For with the real client address (it trusts no upstream proxies by default), which is
+	# what TRUST_PROXY=true in the API relies on.
+	reverse_proxy web:3000 {
+		health_uri /healthz
+		health_interval 15s
+	}
+
+	log {
+		output stdout
+		format json
+	}
+}

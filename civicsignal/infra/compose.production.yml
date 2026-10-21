@@ -1,0 +1,168 @@
+# CivicSignal: single-host staging / pilot deployment (docs/DEPLOYMENT.md, "Single-host pilot").
+#
+#   - Images are pulled BY DIGEST from the registry (built and scanned by civicsignal-deploy.yml); nothing is built here.
+#   - Secrets come from env files written by the operator's secret manager onto the host (mode 0600, outside the
+#     repository). They are never baked into images or committed:
+#       CIVICSIGNAL_ENV_FILE          api, worker, web runtime settings (restricted DB role, Redis, keys, SMTP, ...)
+#       CIVICSIGNAL_MIGRATE_ENV_FILE  owner database credentials, used only by the one-shot migrate job
+#   - Managed PostgreSQL and Redis are preferred (set DATABASE_URL / REDIS_URL to them). For a pilot on one host, the
+#     `selfhosted-data` profile runs both here, on an internal network with persistent volumes and no published ports.
+#     That host is then a single point of failure: see docs/DEPLOYMENT.md before choosing it.
+#
+# Release (what the deployment agent runs; never `up` with a new digest before migrating):
+#   export API_IMAGE=ghcr.io/<owner>/civicsignal-api@sha256:...  WEB_IMAGE=ghcr.io/<owner>/civicsignal-web@sha256:...
+#   docker compose -f infra/compose.production.yml --profile migrate run --rm migrate
+#   docker compose -f infra/compose.production.yml up -d --wait api worker web edge
+name: civicsignal
+
+x-app: &app
+  image: ${API_IMAGE:?set API_IMAGE to a digest reference}
+  env_file: ["${CIVICSIGNAL_ENV_FILE:-/etc/civicsignal/app.env}"]
+  init: true
+  restart: unless-stopped
+  read_only: true
+  tmpfs: ["/tmp:size=64m,mode=1777"]
+  cap_drop: [ALL]
+  security_opt: ["no-new-privileges:true"]
+  logging: &logging
+    driver: json-file
+    options: { max-size: "10m", max-file: "5" }
+
+services:
+  migrate:
+    <<: *app
+    profiles: [migrate]
+    restart: "no"
+    env_file: ["${CIVICSIGNAL_MIGRATE_ENV_FILE:-/etc/civicsignal/migrate.env}"]
+    # Forward-only, checksummed, one transaction per file, serialized by an advisory lock (src/database/migrate.ts).
+    command: ["node", "apps/api/dist/database/migrate-cli.js"]
+    networks: [data]
+    depends_on:
+      db: { condition: service_healthy, required: false }
+
+  api:
+    <<: *app
+    environment:
+      NODE_ENV: production
+      PORT: "4000"
+      TRUST_PROXY: "true"
+    networks: [app, data, egress]
+    stop_grace_period: 30s
+    deploy:
+      resources:
+        limits: { cpus: "2.0", memory: 768M }
+    depends_on:
+      db: { condition: service_healthy, required: false }
+      redis: { condition: service_healthy, required: false }
+
+  worker:
+    <<: *app
+    command: ["node", "apps/api/dist/worker.js"]
+    environment:
+      NODE_ENV: production
+    healthcheck:
+      test: ["CMD", "node", "apps/api/dist/worker-health.js"]
+      interval: 30s
+      timeout: 10s
+      start_period: 30s
+      retries: 3
+    networks: [data, egress]
+    # In-flight report, ingestion and analysis jobs finish before the process exits (src/worker.ts).
+    stop_grace_period: 120s
+    deploy:
+      resources:
+        limits: { cpus: "2.0", memory: 1G }
+    depends_on:
+      db: { condition: service_healthy, required: false }
+      redis: { condition: service_healthy, required: false }
+
+  web:
+    image: ${WEB_IMAGE:?set WEB_IMAGE to a digest reference}
+    init: true
+    restart: unless-stopped
+    read_only: true
+    tmpfs: ["/tmp:size=64m,mode=1777", "/app/apps/web/.next/cache:size=256m,uid=1000,gid=1000"]
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    logging: *logging
+    networks: [public, app]
+    deploy:
+      resources:
+        limits: { cpus: "1.0", memory: 512M }
+    depends_on:
+      api: { condition: service_healthy }
+
+  edge:
+    image: caddy:2@sha256:685ae3d7c34d9b5f8caeddc5d14051db7bbd88ff1f5a2fa0c16bd8ca328fb7af
+    restart: unless-stopped
+    cap_drop: [ALL]
+    cap_add: [NET_BIND_SERVICE]
+    security_opt: ["no-new-privileges:true"]
+    environment:
+      PUBLIC_DOMAIN: ${PUBLIC_DOMAIN:?set PUBLIC_DOMAIN to the real domain (docs/DEPLOYMENT.md, Domain and TLS)}
+      ACME_EMAIL: ${ACME_EMAIL:?set ACME_EMAIL for certificate expiry notices}
+    volumes:
+      - ./Caddyfile.production:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data          # certificates and ACME account: persistent, include in host backups
+      - caddy_config:/config
+    ports: ["80:80", "443:443"]
+    logging: *logging
+    networks: [public]
+    depends_on:
+      web: { condition: service_healthy }
+
+  # ── selfhosted-data profile: PostgreSQL and Redis on this host (pilot only; prefer managed services) ───────────────
+  db:
+    profiles: [selfhosted-data]
+    image: postgres:16@sha256:a902560563d3a5661228585f53474c5065e7f273b21ffd77e555a8b5682c5690
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: civicsignal_owner
+      POSTGRES_DB: civicsignal
+      POSTGRES_PASSWORD_FILE: /run/secrets/postgres_password
+    secrets: [postgres_password]
+    shm_size: 256m
+    volumes: [pgdata:/var/lib/postgresql/data]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U civicsignal_owner -d civicsignal"]
+      interval: 5s
+      retries: 20
+    networks: [data]
+    logging: *logging
+    deploy:
+      resources:
+        limits: { cpus: "2.0", memory: 2G }
+
+  redis:
+    profiles: [selfhosted-data]
+    image: redis:7@sha256:44960b3100c48159a66d28c18b0588c193492e25f7551d60e51dd464fc3eca5b
+    restart: unless-stopped
+    secrets: [redis_password]
+    # The password is read as root, then the image entrypoint drops to the redis user. noeviction: BullMQ must never
+    # lose queued jobs to memory pressure.
+    command: ["sh", "-c", "exec docker-entrypoint.sh redis-server --appendonly yes --maxmemory-policy noeviction --requirepass \"$$(cat /run/secrets/redis_password)\""]
+    volumes: [redisdata:/data]
+    healthcheck:
+      test: ["CMD-SHELL", "redis-cli -a \"$$(cat /run/secrets/redis_password)\" --no-auth-warning ping | grep -q PONG"]
+      interval: 5s
+      retries: 20
+    networks: [data]
+    logging: *logging
+
+secrets:
+  postgres_password:
+    file: ${POSTGRES_PASSWORD_FILE:-/etc/civicsignal/postgres_password}
+  redis_password:
+    file: ${REDIS_PASSWORD_FILE:-/etc/civicsignal/redis_password}
+
+networks:
+  public: {}                     # edge ↔ web
+  app: { internal: true }        # web ↔ api, no internet
+  data: { internal: true }       # api, worker, migrate ↔ PostgreSQL, Redis, no internet
+  egress: {}                     # api and worker outbound: feeds, AI provider, SMTP, webhook receivers
+
+volumes:
+  pgdata:
+  redisdata:
+  caddy_data:
+  caddy_config:

@@ -29,7 +29,7 @@ export class Database implements OnModuleDestroy {
   private readonly pool: Pool;
 
   constructor(@Inject(CONFIG) config: AppConfig) {
-    this.pool = new Pool({ connectionString: config.databaseUrl, max: 10, types: pgTypes, statement_timeout: 15_000 });
+    this.pool = new Pool({ connectionString: config.databaseUrl, max: config.databasePoolMax, types: pgTypes, statement_timeout: 15_000 });
   }
 
   async run<T>(ctx: DbContext, fn: (client: PoolClient) => Promise<T>): Promise<T> {
@@ -71,4 +71,10 @@ export class Database implements OnModuleDestroy {
   async onModuleDestroy(): Promise<void> {
     await this.pool.end();
   }
+
+  /** Connection pool state for /metrics (this process only: the API and each worker hold their own pool). */
+  poolStats(): { total: number; idle: number; waiting: number; max: number } {
+    return { total: this.pool.totalCount, idle: this.pool.idleCount, waiting: this.pool.waitingCount, max: this.pool.options.max ?? 10 };
+  }
 }
+

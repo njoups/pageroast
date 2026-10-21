@@ -1,4 +1,5 @@
 # Local development stack: Postgres, Redis (BullMQ), API, ingestion worker, web, and a Caddy edge proxy.
+# Staging and production use infra/compose.production.yml (images by digest, TLS edge, hardened containers).
 services:
   db:
     image: postgres:16
@@ -34,6 +35,7 @@ services:
 
   api:
     build: { context: ., dockerfile: apps/api/Dockerfile }
+    init: true
     environment:
       NODE_ENV: production
       PORT: 4000
@@ -64,7 +66,9 @@ services:
 
   worker:
     build: { context: ., dockerfile: apps/api/Dockerfile }
+    init: true
     command: ["node", "apps/api/dist/worker.js"]
+    stop_grace_period: 120s
     healthcheck:
       test: ["CMD", "node", "apps/api/dist/worker-health.js"]
       interval: 30s
@@ -92,12 +96,13 @@ services:
 
   web:
     build: { context: ., dockerfile: apps/web/Dockerfile, args: { API_INTERNAL_URL: http://api:4000 } }
-    depends_on: [api]
+    init: true
+    depends_on: { api: { condition: service_healthy } }
 
   edge:
     image: caddy:2
     volumes: ["./infra/Caddyfile:/etc/caddy/Caddyfile:ro"]
-    depends_on: [web]
+    depends_on: { web: { condition: service_healthy } }
     ports: ["127.0.0.1:3000:8080"]
 
 volumes:

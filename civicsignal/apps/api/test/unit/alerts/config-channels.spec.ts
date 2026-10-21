@@ -1,7 +1,7 @@
 import { createServer } from 'node:http';
 import type { AddressInfo } from 'node:net';
 import { alertsBackoff } from '../../../src/alerts/alerts-queue';
-import { EmailChannel, safeHeader } from '../../../src/alerts/channels/email';
+import { EmailChannel, recipientAllowed, safeHeader } from '../../../src/alerts/channels/email';
 import { assertWebhookUrl, signWebhook, verifyWebhookSignature, WebhookSender } from '../../../src/alerts/channels/webhook';
 import { WhatsAppChannel } from '../../../src/alerts/channels/whatsapp';
 import { canTransition } from '../../../src/alerts/levels';
@@ -82,6 +82,31 @@ describe('email safety', () => {
     await expect(fail({ responseCode: 550, message: 'no mailbox' }).send({ to: 'a@example.com', subject: 's', text: 't', html: 'h' })).rejects.toMatchObject({ retryable: false });
     await expect(fail({ responseCode: 421, message: 'try later' }).send({ to: 'a@example.com', subject: 's', text: 't', html: 'h' })).rejects.toMatchObject({ retryable: true });
     await expect(fail({ code: 'ECONNREFUSED', message: 'refused' }).send({ to: 'a@example.com', subject: 's', text: 't', html: 'h' })).rejects.toMatchObject({ retryable: true });
+  });
+});
+
+describe('staging recipient allow-lists (P10)', () => {
+  const msg = (to: string) => ({ to, subject: 's', text: 't', html: 'h' });
+  it('email: only listed domains or addresses are sent; the rest fail permanently without contacting SMTP', async () => {
+    const sent: unknown[] = [];
+    const ch = new EmailChannel({ smtpUrl: 'smtp://unused', from: 'a@example.go.id', allowedDomains: ['example.go.id', 'tester@gmail.example'] },
+      { sendMail: async (m: unknown) => { sent.push(m); return { messageId: 'x' }; } } as never);
+    await ch.send(msg('ops@EXAMPLE.go.id'));
+    await ch.send(msg('tester@gmail.example'));
+    await expect(ch.send(msg('customer@agency.go.id'))).rejects.toMatchObject({ retryable: false, message: expect.stringMatching(/allow-list/) });
+    await expect(new EmailChannel({ smtpUrl: 'smtp://unused', from: 'a@b.co', allowedDomains: [] }, { sendMail: async () => ({}) } as never).send(msg('x@b.co'))).rejects.toThrow(/allow-list/);
+    expect(sent).toHaveLength(2);
+    expect(recipientAllowed('a@x.org', null)).toBe(true);
+  });
+  it('WhatsApp and webhooks: an empty list denies everything before any network call', async () => {
+    let calls = 0;
+    const f = (async () => { calls++; return new Response('{}', { status: 200 }); }) as unknown as typeof fetch;
+    await expect(new WhatsAppChannel({ accessToken: 't', phoneNumberId: '1', templateName: 'x', templateLanguage: 'id', apiBaseUrl: 'https://g', allowedNumbers: [] }, f)
+      .send('+6281234567890', [])).rejects.toThrow(/allow-list/);
+    const http = { post: async () => { calls++; return { status: 200, body: Buffer.from('') }; } } as never;
+    await expect(new WebhookSender(http, ['hooks.example.go.id']).send('https://evil.example/x', '{}', ['s'], {}, 1)).rejects.toThrow(/allow-list/);
+    await new WebhookSender(http, ['hooks.example.go.id']).send('https://hooks.example.go.id/x', '{}', ['s'], {}, 1);
+    expect(calls).toBe(1);
   });
 });
 

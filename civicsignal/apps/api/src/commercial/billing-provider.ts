@@ -7,7 +7,7 @@ import { AppError } from '../common/errors';
  *   - `none` (default): every payment operation answers 503 billing_provider_not_configured. Contract and manual
  *     invoicing keep working.
  *   - `test`: a local simulator for development and automated tests. It does not move money, uses its own documented
- *     event format (not any real provider's) and is refused when NODE_ENV=production.
+ *     event format (not any real provider's) and is refused in production (allowed only when APP_ENV=staging).
  */
 export interface CheckoutRequest { tenantId: string; planVersionId: string; planCode: string; amount: number; currency: string; interval: string; customerRef: string | null; returnUrl: string }
 export interface CheckoutSession { sessionRef: string; url: string; expiresAt: Date }

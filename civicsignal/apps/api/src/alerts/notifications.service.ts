@@ -68,7 +68,7 @@ export class NotificationService {
     this.email = new EmailChannel(config.email);
     this.whatsapp = new WhatsAppChannel(config.whatsapp);
     this.webhooks = new WebhookSender(new SafeHttpClient({ userAgent: 'CivicSignal-Webhooks/1', allowPrivateHosts: config.ingestion.allowPrivateHosts,
-      timeoutMs: config.alerts.webhookTimeoutMs, maxBytes: 64 * 1024, maxRedirects: 0 }));
+      timeoutMs: config.alerts.webhookTimeoutMs, maxBytes: 64 * 1024, maxRedirects: 0 }), config.webhookAllowedHosts);
     this.cipher = CredentialCipher.fromBase64(config.credentialsKey ?? undefined);
   }
 

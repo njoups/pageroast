@@ -8,7 +8,10 @@ import { isBlockedAddress } from '../../src/ingestion/ip-policy';
 const prodBase = {
   NODE_ENV: 'production', DATABASE_URL: 'postgres://app:x@db/cs', COOKIE_SECURE: 'true', REDIS_URL: 'redis://:p@redis:6379/0',
   APP_ENV: 'production', APP_ORIGINS: 'https://app.example.go.id', APP_BASE_URL: 'https://app.example.go.id', TRUST_PROXY: 'true',
+  // Synthetic test values only.
+  CREDENTIALS_KEY: Buffer.alloc(32, 7).toString('base64'), METRICS_TOKEN: 'm'.repeat(40), SMTP_URL: 'smtp://relay.internal:587', EMAIL_FROM: 'alerts@app.example.go.id',
 };
+const stagingBase = { ...prodBase, APP_ENV: 'staging', APP_ORIGINS: 'https://staging.example.go.id', APP_BASE_URL: 'https://staging.example.go.id', NOTIFY_ALLOWED_EMAIL_DOMAINS: 'example.go.id' };
 
 describe('production configuration', () => {
   it('accepts a complete deployed configuration without the owner database credentials', () => {
@@ -31,12 +34,39 @@ describe('production configuration', () => {
     [{ SESSION_IDLE_SECONDS: '60' }, /SESSION_IDLE_SECONDS/],
     [{ APP_ENV: 'prod' }, /APP_ENV/],
     [{ YOUTUBE_API_BASE_URL: 'http://127.0.0.1:9/youtube/v3' }, /YOUTUBE_API_BASE_URL/],
+    [{ CREDENTIALS_KEY: '' }, /CREDENTIALS_KEY is required/],
+    [{ METRICS_TOKEN: '' }, /METRICS_TOKEN is required/],
+    [{ SMTP_URL: '' }, /SMTP_URL and EMAIL_FROM are required/],
+    [{ BILLING_PROVIDER: 'test', BILLING_TEST_WEBHOOK_SECRET: 'x'.repeat(32) }, /refused in production/],
+    [{ API_DOCS_ENABLED: 'true' }, /API_DOCS_ENABLED/],
+    [{ DATABASE_POOL_MAX: '500' }, /DATABASE_POOL_MAX/],
+    [{ AI_REQUESTS_PER_MINUTE: '30/min' }, /Invalid numeric configuration: ai.requestsPerMinute/],
+    [{ SESSION_TTL_SECONDS: 'twelve hours' }, /SESSION|Invalid numeric/],
   ])('refuses %j', (patch, err) => {
     expect(() => loadConfig({ ...prodBase, ...patch })).toThrow(err);
   });
   it('local Compose runs (APP_ENV=local) keep http://localhost but still refuse test-only switches', () => {
     expect(() => loadConfig({ ...prodBase, APP_ENV: 'local', APP_ORIGINS: 'http://localhost:3000', APP_BASE_URL: 'http://localhost:3000', TRUST_PROXY: 'false', REDIS_URL: '' })).not.toThrow();
     expect(() => loadConfig({ ...prodBase, APP_ENV: 'local', AI_PROVIDER: 'test' })).toThrow(/refused in production/);
+  });
+});
+
+describe('staging configuration (P10)', () => {
+  it('requires an email allow-list and denies webhooks and WhatsApp unless listed', () => {
+    expect(() => loadConfig({ ...stagingBase, NOTIFY_ALLOWED_EMAIL_DOMAINS: '' })).toThrow(/NOTIFY_ALLOWED_EMAIL_DOMAINS is required/);
+    const c = loadConfig(stagingBase);
+    expect(c.email.allowedDomains).toEqual(['example.go.id']);
+    expect(c.webhookAllowedHosts).toEqual([]);
+    expect(c.whatsapp.allowedNumbers).toEqual([]);
+    expect(loadConfig({ ...stagingBase, NOTIFY_ALLOWED_WEBHOOK_HOSTS: 'hooks.example.go.id' }).webhookAllowedHosts).toEqual(['hooks.example.go.id']);
+  });
+  it('allows the billing simulator in staging only', () => {
+    expect(loadConfig({ ...stagingBase, BILLING_PROVIDER: 'test', BILLING_TEST_WEBHOOK_SECRET: 'x'.repeat(32) }).billing.provider).toBe('test');
+  });
+  it('production and local keep recipients unrestricted unless lists are set', () => {
+    expect(loadConfig(prodBase).email.allowedDomains).toBeNull();
+    expect(loadConfig(prodBase).webhookAllowedHosts).toBeNull();
+    expect(loadConfig({ ...prodBase, DATABASE_POOL_MAX: '20' }).databasePoolMax).toBe(20);
   });
 });
 

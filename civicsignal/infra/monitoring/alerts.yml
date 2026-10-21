@@ -1,0 +1,193 @@
+# Prometheus alerting rules for CivicSignal (docs/INCIDENT_RESPONSE_RUNBOOK.md has the response for each alert).
+# Validate: promtool check rules infra/monitoring/alerts.yml
+#
+# Thresholds are STARTING POINTS. Latency and pool limits come from the synthetic load test (docs/LOAD_TESTING.md,
+# docs/FULL_SYSTEM_QA_REPORT.md section 9: p95 under 0.45 s up to 32 concurrent requests on 4 vCPU). They are not
+# measured on staging or production infrastructure yet. Re-tune them after two weeks of staging data.
+# Severity: page = act now (any hour); ticket = act within the working day.
+groups:
+  - name: civicsignal-availability
+    rules:
+      - alert: CivicSignalApiDown
+        expr: up{job="civicsignal-api"} == 0
+        for: 2m
+        labels: { severity: page }
+        annotations:
+          summary: API metrics endpoint unreachable for 2 minutes
+          runbook: docs/INCIDENT_RESPONSE_RUNBOOK.md#1-application-outage
+      - alert: CivicSignalPublicReadinessFailing
+        # Blackbox exporter probing https://<domain>/readyz (web → API → database, Redis, migrations).
+        expr: probe_success{job="civicsignal-readyz"} == 0
+        for: 3m
+        labels: { severity: page }
+        annotations:
+          summary: Public /readyz failing for 3 minutes
+          runbook: docs/INCIDENT_RESPONSE_RUNBOOK.md#1-application-outage
+      - alert: CivicSignalCertificateExpiring
+        expr: probe_ssl_earliest_cert_expiry{job="civicsignal-readyz"} - time() < 14 * 86400
+        for: 1h
+        labels: { severity: ticket }
+        annotations:
+          summary: TLS certificate expires in under 14 days (automatic renewal is failing)
+          runbook: docs/DEPLOYMENT.md#domain-tls-and-network-checklist
+      - alert: CivicSignalNoWorkers
+        expr: civicsignal_workers == 0
+        for: 5m
+        labels: { severity: page }
+        annotations:
+          summary: No worker heartbeat for 5 minutes (collection, analysis, alerts and reports have stopped)
+          runbook: docs/INCIDENT_RESPONSE_RUNBOOK.md#3-queue-backlog
+
+  - name: civicsignal-api
+    rules:
+      - alert: CivicSignalHighErrorRate
+        expr: |
+          sum(rate(civicsignal_http_requests_total{status="5xx"}[5m]))
+            / clamp_min(sum(rate(civicsignal_http_requests_total[5m])), 0.01) > 0.05
+        for: 10m
+        labels: { severity: page }
+        annotations:
+          summary: More than 5% of API requests fail with 5xx
+          runbook: docs/INCIDENT_RESPONSE_RUNBOOK.md#1-application-outage
+      - alert: CivicSignalSlowRequests
+        expr: |
+          histogram_quantile(0.95, sum by (le) (rate(civicsignal_http_request_duration_seconds_bucket{route!~"/health.*"}[10m]))) > 1.5
+        for: 15m
+        labels: { severity: ticket }
+        annotations:
+          summary: API p95 latency above 1.5 s for 15 minutes (load test p95 was under 0.45 s)
+          runbook: docs/INCIDENT_RESPONSE_RUNBOOK.md#1-application-outage
+      - alert: CivicSignalDbPoolSaturated
+        expr: civicsignal_db_pool_connections{state="waiting"} > 0
+        for: 5m
+        labels: { severity: ticket }
+        annotations:
+          summary: Requests have been waiting for a database connection for 5 minutes (raise DATABASE_POOL_MAX or add replicas)
+          runbook: docs/INCIDENT_RESPONSE_RUNBOOK.md#2-database-unavailable
+      - alert: CivicSignalApiMemoryHigh
+        # The production compose limit is 768 MiB per API container.
+        expr: process_resident_memory_bytes{job="civicsignal-api"} > 650 * 1024 * 1024
+        for: 15m
+        labels: { severity: ticket }
+        annotations:
+          summary: API resident memory above 650 MiB for 15 minutes (container limit 768 MiB)
+          runbook: docs/INCIDENT_RESPONSE_RUNBOOK.md#1-application-outage
+      - alert: CivicSignalApiCpuHigh
+        expr: rate(process_cpu_seconds_total{job="civicsignal-api"}[5m]) > 1.6
+        for: 15m
+        labels: { severity: ticket }
+        annotations:
+          summary: API uses more than 1.6 of its 2 CPUs for 15 minutes (check for login floods; docs/LOAD_TESTING.md)
+          runbook: docs/INCIDENT_RESPONSE_RUNBOOK.md#1-application-outage
+
+  - name: civicsignal-pipelines
+    rules:
+      - alert: CivicSignalQueueBacklog
+        expr: civicsignal_queue_lag_seconds > 1800
+        for: 15m
+        labels: { severity: ticket }
+        annotations:
+          summary: "Oldest waiting job in the {{ $labels.queue }} queue is older than 30 minutes"
+          runbook: docs/INCIDENT_RESPONSE_RUNBOOK.md#3-queue-backlog
+      - alert: CivicSignalIngestionOverdue
+        expr: civicsignal_ingestion_overdue_seconds > 3600
+        for: 15m
+        labels: { severity: ticket }
+        annotations:
+          summary: A source collection has been overdue for more than an hour
+          runbook: docs/INCIDENT_RESPONSE_RUNBOOK.md#3-queue-backlog
+      - alert: CivicSignalIngestionFailing
+        expr: |
+          sum(civicsignal_ingestion_runs_last_hour{status=~"failed|dead_lettered"}) > 5
+            and sum(civicsignal_ingestion_runs_last_hour{status=~"failed|dead_lettered"}) / clamp_min(sum(civicsignal_ingestion_runs_last_hour), 1) > 0.5
+        for: 30m
+        labels: { severity: ticket }
+        annotations:
+          summary: More than half of collection runs failed in the last hour
+          runbook: docs/INCIDENT_RESPONSE_RUNBOOK.md#4-provider-outage
+      - alert: CivicSignalAnalysisFailing
+        expr: civicsignal_analysis_failures_last_hour > 20
+        for: 15m
+        labels: { severity: ticket }
+        annotations:
+          summary: More than 20 AI analyses failed in the last hour (provider errors or rate limits)
+          runbook: docs/INCIDENT_RESPONSE_RUNBOOK.md#4-provider-outage
+      - alert: CivicSignalAiQuotaExhausted
+        expr: civicsignal_tenants_ai_quota_exhausted > 0
+        for: 30m
+        labels: { severity: ticket }
+        annotations:
+          summary: "{{ $value }} organization(s) reached their monthly AI token limit (analysis falls back to baseline)"
+          runbook: docs/PILOT_OPERATIONS_RUNBOOK.md#4-usage-and-cost-monitoring
+      - alert: CivicSignalSocialQuotaPaused
+        expr: sum(civicsignal_social_quota_events_last_day{level="provider_quota"}) > 0
+        for: 5m
+        labels: { severity: ticket }
+        annotations:
+          summary: A social connector hit the provider's quota in the last 24 h (collection paused until the provider resets)
+          runbook: docs/INCIDENT_RESPONSE_RUNBOOK.md#4-provider-outage
+      - alert: CivicSignalReportsFailing
+        expr: sum(civicsignal_report_runs_last_hour{status="failed"}) > 3
+        for: 10m
+        labels: { severity: ticket }
+        annotations:
+          summary: More than 3 report runs failed in the last hour
+          runbook: docs/RUNBOOK.md#report-scheduling
+
+  - name: civicsignal-delivery-and-billing
+    rules:
+      - alert: CivicSignalNotificationsFailing
+        expr: sum(civicsignal_notification_failures_last_hour{status=~"failed|dead"}) > 10
+        for: 10m
+        labels: { severity: ticket }
+        annotations:
+          summary: More than 10 alert notifications failed in the last hour
+          runbook: docs/RUNBOOK.md#notifications-not-arriving
+      - alert: CivicSignalEmailUnconfigured
+        expr: sum(civicsignal_notification_failures_last_hour{status="unconfigured"}) > 0
+        for: 5m
+        labels: { severity: ticket }
+        annotations:
+          summary: Notifications are being recorded as unconfigured (SMTP_URL / EMAIL_FROM missing or wrong)
+          runbook: docs/RUNBOOK.md#notifications-not-arriving
+      - alert: CivicSignalWebhooksFailing
+        expr: civicsignal_webhook_failures_last_hour > 20
+        for: 15m
+        labels: { severity: ticket }
+        annotations:
+          summary: More than 20 customer webhook deliveries failed in the last hour
+          runbook: docs/RUNBOOK.md#webhook-endpoint-failing
+      - alert: CivicSignalBillingWebhookFailures
+        expr: sum(civicsignal_billing_webhook_failures_last_hour) > 0
+        for: 5m
+        labels: { severity: ticket }
+        annotations:
+          summary: Billing provider webhooks failed or were rejected (subscriptions may be out of date)
+          runbook: docs/INCIDENT_RESPONSE_RUNBOOK.md#7-unexpected-billing-behaviour
+
+  - name: civicsignal-data
+    rules:
+      - alert: CivicSignalBackupStale
+        # Written by scripts/backup.sh (BACKUP_METRICS_FILE). For managed PostgreSQL, also alert on the provider's own
+        # snapshot/PITR status, which this rule cannot see.
+        expr: time() - civicsignal_backup_last_success_timestamp_seconds > 26 * 3600
+        for: 10m
+        labels: { severity: page }
+        annotations:
+          summary: No successful logical backup for more than 26 hours
+          runbook: docs/INCIDENT_RESPONSE_RUNBOOK.md#8-failed-backups
+      - alert: CivicSignalBackupMetricMissing
+        expr: absent(civicsignal_backup_last_success_timestamp_seconds)
+        for: 2h
+        labels: { severity: ticket }
+        annotations:
+          summary: The backup metric is missing (backups never ran on this host, or BACKUP_METRICS_FILE is not set)
+          runbook: docs/DISASTER_RECOVERY_RUNBOOK.md#4-backups
+      - alert: CivicSignalDiskFilling
+        # node_exporter on the database/host volume; for managed databases use the provider's storage alert.
+        expr: node_filesystem_avail_bytes{mountpoint=~"/|/var/lib/docker"} / node_filesystem_size_bytes{mountpoint=~"/|/var/lib/docker"} < 0.15
+        for: 15m
+        labels: { severity: ticket }
+        annotations:
+          summary: "Less than 15% free on {{ $labels.mountpoint }}"
+          runbook: docs/INCIDENT_RESPONSE_RUNBOOK.md#2-database-unavailable

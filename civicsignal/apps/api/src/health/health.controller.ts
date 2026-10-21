@@ -74,6 +74,9 @@ export class HealthController {
       for (const [state, n] of Object.entries(h.counts)) depth.push([{ queue: name, state }, n]);
       lag.push([{ queue: name }, h.lagSeconds]);
     }
+    const pool = this.db.poolStats();
+    g('civicsignal_db_pool_connections', 'API database pool connections by state (max is the configured limit).',
+      [[{ state: 'total' }, pool.total], [{ state: 'idle' }, pool.idle], [{ state: 'waiting' }, pool.waiting], [{ state: 'max' }, pool.max]]);
     g('civicsignal_queue_jobs', 'Jobs per queue and state.', depth);
     g('civicsignal_queue_lag_seconds', 'Age of the oldest waiting job.', lag);
     if (this.redis) {
@@ -88,6 +91,10 @@ export class HealthController {
       artifacts: (await c.query(`SELECT count(*)::int AS n, coalesce(sum(size_bytes), 0)::bigint AS b FROM report_artifacts WHERE data IS NOT NULL`)).rows[0],
       dbBytes: Number((await c.query(`SELECT pg_database_size(current_database())::bigint AS b`)).rows[0].b),
       tenants: (await c.query<{ id: string }>('SELECT id FROM tenants WHERE archived_at IS NULL')).rows.map((r) => r.id),
+      // Aggregated across tenants, never labelled by tenant. Each query degrades to "no series" on its own.
+      runs: (await c.query(`SELECT status, count(*)::int AS n FROM connector_runs WHERE finished_at > now() - interval '1 hour' GROUP BY 1`).catch(() => ({ rows: [] }))).rows,
+      billingHooks: (await c.query(`SELECT status, count(*)::int AS n FROM billing_webhook_events WHERE received_at > now() - interval '1 hour' AND status IN ('failed','rejected') GROUP BY 1`).catch(() => ({ rows: [] }))).rows,
+      socialQuota: (await c.query(`SELECT level, count(*)::int AS n FROM social_budget_events WHERE created_at > now() - interval '24 hours' AND level IN ('hard','provider_quota') GROUP BY 1`).catch(() => ({ rows: [] }))).rows,
     })).catch(() => null);
     if (sys) {
       g('civicsignal_ingestion_overdue_seconds', 'How long the most overdue source collection has been waiting.', [[{}, sys.lag]]);
@@ -96,6 +103,9 @@ export class HealthController {
       g('civicsignal_webhook_failures_last_hour', 'Failed or dead webhook deliveries in the last hour.', [[{}, sys.webhooks]]);
       g('civicsignal_report_artifact_bytes', 'Bytes of stored report files.', [[{}, Number(sys.artifacts.b)]]);
       g('civicsignal_database_bytes', 'Database size.', [[{}, sys.dbBytes]]);
+      g('civicsignal_ingestion_runs_last_hour', 'Collection runs finished in the last hour by status.', sys.runs.map((r) => [{ status: r.status }, r.n]));
+      g('civicsignal_billing_webhook_failures_last_hour', 'Billing provider webhooks that failed or were rejected in the last hour.', sys.billingHooks.map((r) => [{ status: r.status }, r.n]));
+      g('civicsignal_social_quota_events_last_day', 'Social connectors paused by a hard budget or provider quota in the last 24 h.', sys.socialQuota.map((r) => [{ level: r.level }, r.n]));
       // Per-tenant counters that RLS keeps tenant-scoped: summed across tenants, never labelled by tenant.
       let failed = 0; let exhausted = 0;
       for (const t of sys.tenants.slice(0, 500)) {

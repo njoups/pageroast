@@ -33,9 +33,12 @@ export function assertWebhookUrl(url: string, opts: { allowHttp: boolean; allowP
 export interface WebhookResult { status: number; durationMs: number; body: string }
 
 export class WebhookSender {
-  constructor(private readonly http: SafeHttpClient) {}
+  /** `allowedHosts`: receivers this environment may call (`null` = any; staging uses an explicit list or none). */
+  constructor(private readonly http: SafeHttpClient, private readonly allowedHosts: string[] | null = null) {}
 
   async send(url: string, body: string, secrets: string[], headers: Record<string, string>, nowSec: number): Promise<WebhookResult> {
+    const host = (() => { try { return new URL(url).hostname.toLowerCase(); } catch { return ''; } })();
+    if (this.allowedHosts !== null && !this.allowedHosts.includes(host)) throw new DeliveryError(false, 'Receiver host is not on this environment\'s allow-list (NOTIFY_ALLOWED_WEBHOOK_HOSTS)');
     const started = Date.now();
     let res;
     try {

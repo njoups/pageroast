@@ -1,6 +1,9 @@
 #!/usr/bin/env bash
 # Restore a scripts/backup.sh dump into an EMPTY database, with the application role's privileges exactly as backed up.
-# Usage: TARGET_DATABASE_URL=... APP_DB_PASSWORD=... scripts/restore.sh backup.dump
+# Usage: TARGET_DATABASE_URL=... [APP_DB_PASSWORD=...] scripts/restore.sh backup.dump
+# APP_DB_PASSWORD sets the password of civicsignal_app, a role shared by EVERY database on the server. Set it only when
+# restoring onto a new server; on a server that also hosts the live database, leave it unset (the role keeps its
+# current password) or the running application is locked out.
 # Then prove it: scripts/verify-restore.sh (restores into a scratch database and compares rows, privileges and audit chains).
 set -euo pipefail
 : "${TARGET_DATABASE_URL:?set TARGET_DATABASE_URL (owner role, empty database)}"

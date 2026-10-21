@@ -110,6 +110,17 @@ lifecycle job (15 min): refresh due records by id ─> update | purge (gone at p
 News and social records share tables and pipeline but are never combined silently: executive analytics, reports, dashboard
 aggregates and alert rules default to news; `/social/analytics` reports social data with its own definitions.
 
+## Deployment shape (Prompt 10)
+- **Processes:** `api` (NestJS, port 4000, internal), `worker` (the same image, `dist/worker.js`; exactly one runs the schedulers) and `web` (Next.js `next start`, port 3000, internal; proxies `/api/v1/*` to the API and serves `/healthz` and `/readyz`). A TLS edge (Caddy, or a load balancer) is the only public component.
+- **State:** PostgreSQL only; Redis holds transient queues. There is no object storage: report files live in PostgreSQL with a TTL.
+- **Files:**
+  - `infra/compose.production.yml` (single host: staging or pilot);
+  - `infra/Caddyfile.production`;
+  - `infra/env/*.env.example`;
+  - `infra/monitoring/` (alert rules and an example scrape config).
+- **Release path:** CI (tests, migration lock check, Trivy, stack test), then `civicsignal-deploy` (images by digest, staging first, approval), then the operator's deployment agent (migrate job, then rolling restart).
+- The full design and the managed-services option are in DEPLOYMENT.md.
+
 ## API modules (apps/api/src)
 | Module | Responsibility |
 |---|---|

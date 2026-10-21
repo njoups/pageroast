@@ -1,9 +1,13 @@
 name: civicsignal-deploy
 
 # Manual deployments only: nothing here runs on push. Production requires
-#   1. a commit that is on main and passed civicsignal-ci,
-#   2. approval by a required reviewer of the GitHub environment "production" (Settings → Environments),
-# and every deployment ends with a readiness check. Procedure and rollback: civicsignal/docs/DEPLOYMENT.md.
+#   1. a commit that passed civicsignal-ci and is on the release branch (repository variable RELEASE_BRANCH, default
+#      main; the branch must exist and be protected: see docs/PILOT_DEPLOYMENT_AUDIT.md),
+#   2. a successful staging deployment of the SAME commit by this workflow,
+#   3. approval by a required reviewer of the GitHub environment "production" (Settings → Environments),
+# and every deployment ends with an end-to-end readiness check and a read-only smoke test.
+# Procedure and rollback: civicsignal/docs/DEPLOYMENT.md.
+run-name: Deploy ${{ inputs.environment }} ${{ inputs.sha }}
 on:
   workflow_dispatch:
     inputs:
@@ -34,19 +38,25 @@ jobs:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
-      - name: Commit is valid, on main (production), and passed CI
+      - name: Commit is valid, passed CI, and (production) is on the release branch and was deployed to staging
         env:
           GH_TOKEN: ${{ github.token }}
           SHA: ${{ inputs.sha }}
           TARGET: ${{ inputs.environment }}
+          RELEASE_BRANCH: ${{ vars.RELEASE_BRANCH || 'main' }}
         run: |
           [[ "$SHA" =~ ^[0-9a-f]{40}$ ]] || { echo "::error::sha must be a full 40-character commit SHA"; exit 1; }
           git cat-file -e "$SHA^{commit}"
-          if [ "$TARGET" = production ]; then
-            git merge-base --is-ancestor "$SHA" origin/main || { echo "::error::production deploys only commits that are on main"; exit 1; }
-          fi
           ok=$(gh api "repos/$GITHUB_REPOSITORY/actions/workflows/civicsignal-ci.yml/runs?head_sha=$SHA&status=success" --jq '.total_count')
           [ "$ok" -gt 0 ] || { echo "::error::civicsignal-ci has not passed for $SHA"; exit 1; }
+          if [ "$TARGET" = production ]; then
+            git rev-parse --verify -q "origin/$RELEASE_BRANCH" >/dev/null || { echo "::error::release branch '$RELEASE_BRANCH' does not exist; create and protect it first"; exit 1; }
+            git merge-base --is-ancestor "$SHA" "origin/$RELEASE_BRANCH" || { echo "::error::production deploys only commits on $RELEASE_BRANCH"; exit 1; }
+            staged=$(gh api --paginate "repos/$GITHUB_REPOSITORY/actions/workflows/civicsignal-deploy.yml/runs?status=success&per_page=100" \
+              --jq ".workflow_runs[] | select(.display_title == \"Deploy staging $SHA\") | .id" | head -1)
+            [ -n "$staged" ] || { echo "::error::$SHA has no successful staging deployment; deploy and verify it on staging first"; exit 1; }
+            echo "staging deployment of $SHA: run $staged" >> "$GITHUB_STEP_SUMMARY"
+          fi
 
   images:
     needs: gate
@@ -73,7 +83,7 @@ jobs:
           registry="ghcr.io/${GITHUB_REPOSITORY_OWNER,,}"
           echo "$GHCR_TOKEN" | docker login ghcr.io -u "$GITHUB_ACTOR" --password-stdin
           for img in api web; do
-            docker build -f "apps/$img/Dockerfile" -t "$registry/civicsignal-$img:$SHA" .
+            docker build -f "apps/$img/Dockerfile" --build-arg GIT_SHA="$SHA" -t "$registry/civicsignal-$img:$SHA" .
             docker push -q "$registry/civicsignal-$img:$SHA"
             digest=$(docker inspect --format '{{index .RepoDigests 0}}' "$registry/civicsignal-$img:$SHA")
             echo "$img=$digest" >> "$GITHUB_OUTPUT"
@@ -86,6 +96,12 @@ jobs:
     # Approval gate: configure required reviewers (and for production, "prevent self-review") on this environment.
     environment: ${{ inputs.environment }}
     steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.sha }}
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
       - name: Hand the image digests to the environment's deployment agent
         # The agent (operated in the target network, see docs/DEPLOYMENT.md) pulls by digest, runs the migrate service,
         # restarts api/worker/web and keeps the previous digests for rollback. Nothing is deployed when it is not configured.
@@ -103,16 +119,22 @@ jobs:
           body=$(jq -n --arg api "$API_IMAGE" --arg web "$WEB_IMAGE" --arg sha "$SHA" --arg by "$GITHUB_ACTOR" --arg run "$GITHUB_RUN_ID" \
             '{apiImage:$api, webImage:$web, commit:$sha, requestedBy:$by, runId:$run, migrate:true}')
           curl --fail-with-body -sS -X POST "$HOOK_URL" -H "Authorization: Bearer $HOOK_TOKEN" -H 'Content-Type: application/json' -d "$body"
-      - name: Post-deployment readiness check
+      - name: Post-deployment readiness (web → API → database, Redis, migrations through the public edge)
         env:
           BASE_URL: ${{ vars.PUBLIC_BASE_URL }}
         run: |
           [ -n "$BASE_URL" ] || { echo "::error::set the PUBLIC_BASE_URL variable on the environment"; exit 1; }
           for i in $(seq 1 30); do
-            if curl -fsS --max-time 5 "$BASE_URL/health/ready" | jq -e '.status == "ok"' >/dev/null; then
-              echo "ready after $((i * 10))s"; curl -fsS --max-time 5 "$BASE_URL/health/live" >/dev/null; exit 0
-            fi
+            if curl -fsS --max-time 5 "$BASE_URL/readyz" | jq -e '.status == "ok"' >/dev/null; then echo "ready after $((i * 10))s"; exit 0; fi
             sleep 10
           done
-          echo "::error::$BASE_URL/health/ready did not report ok within 5 minutes. Roll back: docs/DEPLOYMENT.md#rollback"
+          echo "::error::$BASE_URL/readyz did not report ok within 5 minutes. Roll back: docs/DEPLOYMENT.md#rollback"
           exit 1
+      - name: Read-only smoke test (no data changes, no messages, no provider quota)
+        working-directory: civicsignal
+        env:
+          BASE_URL: ${{ vars.PUBLIC_BASE_URL }}
+          SMOKE_EMAIL: ${{ secrets.SMOKE_EMAIL }}
+          SMOKE_PASSWORD: ${{ secrets.SMOKE_PASSWORD }}
+        run: |
+          node scripts/smoke.mjs || { echo "::error::smoke test failed after deploying ${{ inputs.sha }}. Roll back: docs/DEPLOYMENT.md#rollback"; exit 1; }

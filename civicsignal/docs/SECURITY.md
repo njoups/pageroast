@@ -48,6 +48,24 @@ Findings, open risks and acceptance criteria: [PRODUCTION_READINESS_ASSESSMENT.m
 | Notifications claimed atomically; disabled or removed users no longer receive email | ✅ tested |
 | Open P3s: inbox visibility re-check (AZ-03), non-`__Host-` cookie fallback (AZ-04), no email verification (AZ-05), system-read policies (AZ-07), social parent title (AZ-08), cluster uncertainty notes (AZ-09) | ⬜ open |
 
+### Deployment and operations controls (Prompt 10; see PILOT_DEPLOYMENT_AUDIT.md)
+"Verified" means verified in this development container on the production Compose stack (`scripts/stack-test.sh`), **not** on staging or production infrastructure, neither of which exists.
+
+| Control | State |
+|---|---|
+| Startup refuses deployed environments without HTTPS origins, TRUST_PROXY, Redis, `CREDENTIALS_KEY`, `METRICS_TOKEN` or SMTP; refuses non-numeric numeric settings; production refuses test switches and API docs | ✅ tested |
+| Staging cannot message real customers: email only to `NOTIFY_ALLOWED_EMAIL_DOMAINS` (required), webhooks and WhatsApp deny-all unless listed; enforced before any network call | ✅ tested |
+| Containers run as uid 1000 with a read-only root filesystem, all capabilities dropped and `no-new-privileges`, with resource limits; only the TLS edge publishes ports; `app` and `data` networks are internal | ✅ verified (stack test) |
+| TLS edge: automatic certificates, HTTP→HTTPS, HSTS 1 year, security headers, 2 MB body limit; `/metrics`, `/health/*` and API docs are 404 publicly | ✅ verified with Caddy's internal CA (no real domain) |
+| Images: base pinned by digest, no package manager at runtime, Trivy scan in CI, deployed by digest; secrets never in images (`.dockerignore`) | ✅ CI; registry push never run |
+| Owner database credentials only in the one-shot migrate job | ✅ verified |
+| Encrypted logical backups (GPG) with checksums and manifest; restore drill proves rows, RLS, privileges and audit chains; the drill no longer changes the shared app-role password | ✅ verified (2 defects fixed, DISASTER_RECOVERY_RUNBOOK.md) |
+| No generated secret appears in any container log | ✅ verified (stack test) |
+| Production deploys need CI, a protected release branch, a successful staging deployment of the same SHA and an approval | ⬜ workflow implemented; **release branch, environments and deployment agent do not exist** |
+| Secret manager, custodians, rotation | ⬜ procedure documented (DEPLOYMENT.md); nothing provisioned |
+| Monitoring and paging | ⬜ rules written and validated (`infra/monitoring/alerts.yml`); not deployed |
+| Repository visibility | ⚠️ public; the owner must make it private |
+
 ## Threat model (summary)
 | Threat | Mitigation |
 |---|---|

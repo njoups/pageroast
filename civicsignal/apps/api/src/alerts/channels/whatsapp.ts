@@ -13,6 +13,7 @@ export class WhatsAppChannel {
   async send(toE164: string, params: string[]): Promise<{ messageId: string }> {
     if (!this.configured) throw new DeliveryError(false, 'WhatsApp is not configured');
     if (!/^\+[1-9]\d{7,14}$/.test(toE164)) throw new DeliveryError(false, 'Destination is not an E.164 phone number');
+    if (this.cfg.allowedNumbers && !this.cfg.allowedNumbers.includes(toE164)) throw new DeliveryError(false, 'Destination is not on this environment\'s allow-list (NOTIFY_ALLOWED_PHONE_NUMBERS)');
     let res: Response;
     try {
       res = await this.fetchFn(`${this.cfg.apiBaseUrl}/${encodeURIComponent(this.cfg.phoneNumberId!)}/messages`, {

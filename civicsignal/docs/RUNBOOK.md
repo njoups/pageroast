@@ -137,20 +137,20 @@ rotation as follows:
   - HTTP: `civicsignal_http_requests_total{method,route,status}`, `civicsignal_http_request_duration_seconds`, `civicsignal_http_in_flight`.
   - Process: `process_*`.
   - Work: `civicsignal_queue_jobs{queue,state}`, `civicsignal_queue_lag_seconds`, `civicsignal_workers`, `civicsignal_ingestion_overdue_seconds`, `civicsignal_report_runs_last_hour`, `civicsignal_analysis_failures_last_hour`, `civicsignal_notification_failures_last_hour`, `civicsignal_webhook_failures_last_hour`, `civicsignal_tenants_ai_quota_exhausted`, `civicsignal_report_artifact_bytes`, `civicsignal_database_bytes`.
+  - Since Prompt 10:
+    - `civicsignal_db_pool_connections{state}` (total, idle, waiting, max; API process);
+    - `civicsignal_ingestion_runs_last_hour{status}`;
+    - `civicsignal_billing_webhook_failures_last_hour{status}`;
+    - `civicsignal_social_quota_events_last_day{level}`;
+    - backup metrics from the textfile collector (`civicsignal_backup_last_success_timestamp_seconds`, `civicsignal_backup_last_size_bytes`).
+- **Public probes** (through the edge): `GET /healthz` (web process) and `GET /readyz` (web → API → database, Redis, migrations). Both return only `{"status": …}`.
 - **Access logs** are one JSON line per request (`event: http.request`) with `requestId`, `route` (template, not the raw path), status, duration, `userId` and `tenantId`. The same `requestId` is on error responses and audit events, so one id links all three.
 
-Suggested alerts (thresholds are starting points; tune after a week of staging data):
-| Alert | Condition | Severity |
-|---|---|---|
-| API not ready | `/health/ready` ≠ 200 for 2 min | page |
-| Error rate | 5xx > 2% of requests over 5 min | page |
-| Latency | p95 > 1 s over 10 min (exclude report downloads) | ticket |
-| Worker down | `civicsignal_workers` = 0 for 5 min | page |
-| Queue backlog | `civicsignal_queue_lag_seconds` > 900 | ticket |
-| Collection stale | `civicsignal_ingestion_overdue_seconds` > 2 × refresh interval | ticket |
-| Delivery failures | webhook or notification failures in the last hour > 10 | ticket |
-| Auth abuse | rate of `auth.login_failed` audit events, or 429s on `/api/v1/auth/*`, 10× baseline | ticket (page if sustained) |
-| DB growth | `civicsignal_database_bytes` > 80% of allocated storage | ticket |
+**Alert rules** are in `infra/monitoring/alerts.yml` (23 rules, `promtool`-validated), and each links to its response in INCIDENT_RESPONSE_RUNBOOK.md. Scrape setup: DEPLOYMENT.md § Observability.
+
+**Not covered by a rule yet:**
+- **Authentication abuse.** The HTTP metric groups statuses by class, so 429s are not separate. Watch `auth.login_failed` audit events and edge or WAF rate-limit logs.
+- **Usage-reconciliation drift.** Use the commercial health page (COMMERCIAL_OPERATIONS_RUNBOOK.md § Billing health checks).
 
 ## Retention and deletion
 - **Status per tenant:** `GET /api/v1/organizations/:orgId/data-governance` returns controls, policies and recent `retention_runs`.

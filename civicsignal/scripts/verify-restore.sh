@@ -20,7 +20,7 @@ started=$(date +%s)
 echo "[1/6] checksums"
 ( cd "$(dirname "$file")" && sha256sum -c "$(basename "$base").sha256" )
 dump="$file"
-if [[ "$file" == *.gpg ]]; then dump="$(mktemp)"; gpg --batch --quiet --output "$dump" --decrypt "$file"; trap 'rm -f "$dump"' EXIT; fi
+if [[ "$file" == *.gpg ]]; then dump="$(mktemp)"; gpg --batch --yes --quiet --output "$dump" --decrypt "$file"; trap 'rm -f "$dump"' EXIT; fi
 
 db="restore_drill_$(date -u +%Y%m%d%H%M%S)"
 target="$(python3 -c 'import sys,urllib.parse as u; p=u.urlsplit(sys.argv[1]); print(u.urlunsplit(p._replace(path="/"+sys.argv[2])))' "$ADMIN_DATABASE_URL" "$db")"
@@ -28,7 +28,10 @@ echo "[2/6] restore into new database $db"
 psql "$ADMIN_DATABASE_URL" -X -q -v ON_ERROR_STOP=1 -c "CREATE DATABASE $db"
 cleanup() { [ "${KEEP_RESTORE_DB:-0}" = 1 ] || psql "$ADMIN_DATABASE_URL" -X -q -c "DROP DATABASE IF EXISTS $db WITH (FORCE)" >/dev/null 2>&1 || true; }
 trap 'cleanup; [ "$dump" != "$file" ] && rm -f "$dump"' EXIT
-TARGET_DATABASE_URL="$target" APP_DB_PASSWORD="${APP_DB_PASSWORD:-restore-drill-$RANDOM$RANDOM}" bash "$dir/scripts/restore.sh" "$dump" >/dev/null
+# civicsignal_app is a CLUSTER-level role shared with the live database on the same server: the drill must never set its
+# password, or the running application loses its connections (found in the 2026-10-21 drill). APP_DB_PASSWORD is
+# therefore removed from the restore's environment.
+env -u APP_DB_PASSWORD TARGET_DATABASE_URL="$target" bash "$dir/scripts/restore.sh" "$dump" >/dev/null
 
 echo "[3/6] migrations"
 restored_migrations="$(psql "$target" -X -At -c "SELECT 'migration ' || version FROM schema_migrations ORDER BY version")"

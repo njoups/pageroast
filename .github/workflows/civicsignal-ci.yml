@@ -26,6 +26,8 @@ jobs:
           node-version: 22
       - name: Secret scan (tree and history; prints rule and location, never the value)
         run: node scripts/scan-secrets.mjs --history
+      - name: Migration safety (locked migrations unchanged; new ones expand/contract, reviewed and locked)
+        run: node scripts/check-migrations.mjs
 
   verify:
     needs: secrets
@@ -102,3 +104,31 @@ jobs:
         run: |
           docker run --rm -v /var/run/docker.sock:/var/run/docker.sock aquasec/trivy:0.56.2 image \
             --scanners vuln --severity HIGH,CRITICAL --ignore-unfixed --exit-code 1 --no-progress civicsignal-${{ matrix.image }}:ci
+
+  # Stage 4: the production deployment files with images built from the real Dockerfiles, in staging mode, on the
+  # runner: migrate job, health checks, TLS edge, container hardening, HTTPS smoke test, encrypted backup + restore
+  # drill, graceful shutdown and log hygiene (scripts/stack-test.sh). Disposable; nothing leaves the runner.
+  stack:
+    needs: verify
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: PostgreSQL 16 client tools
+        working-directory: .
+        run: |
+          if ! pg_dump --version 2>/dev/null | grep -q ' 16\.'; then
+            sudo apt-get update -qq && sudo apt-get install -y -qq postgresql-client-16
+            echo /usr/lib/postgresql/16/bin >> "$GITHUB_PATH"
+          fi
+      - name: Build images from the reviewed Dockerfiles
+        run: |
+          docker build -f apps/api/Dockerfile --build-arg GIT_SHA=$GITHUB_SHA -t civicsignal-api:ci .
+          docker build -f apps/web/Dockerfile --build-arg GIT_SHA=$GITHUB_SHA -t civicsignal-web:ci .
+      - name: Disposable production-stack test
+        env:
+          API_IMAGE: civicsignal-api:ci
+          WEB_IMAGE: civicsignal-web:ci
+        run: bash scripts/stack-test.sh

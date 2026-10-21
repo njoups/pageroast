@@ -402,3 +402,39 @@ The full report is in [FULL_SYSTEM_QA_REPORT.md](FULL_SYSTEM_QA_REPORT.md).
   - FE-02: social connector edit UI.
 - **Tests:** 34 API suites / 577 tests, web 20/20, lint, typecheck and build all pass. Secret, licence and production dependency scans are clean.
 - **Verdict:** ready for **controlled internal testing**. Not ready for a pilot until the conditions in the QA report, section 13, are met (above all, live verification of the LLM, SMTP and staging environment).
+
+## Prompt 10: pilot deployment and production operations (2026-10-21)
+
+Audit and gap list: [PILOT_DEPLOYMENT_AUDIT.md](PILOT_DEPLOYMENT_AUDIT.md). **No staging or production environment exists; nothing was deployed.**
+
+**Implemented and verified locally** (production Compose stack in this container, `scripts/stack-test.sh`):
+- **Startup validation:** stricter rules for staging and production. Required `CREDENTIALS_KEY`, `METRICS_TOKEN` and SMTP; numeric settings checked; `DATABASE_POOL_MAX`.
+- **Staging sandbox:** recipient allow-lists for email, webhooks and WhatsApp; billing simulator allowed in staging only.
+- **Production Compose stack:** `infra/compose.production.yml`, with a TLS edge (`Caddyfile.production`), hardened containers, internal networks, a one-shot migrate job and an optional self-hosted data profile.
+- **Images:** base pinned by digest; uid 1000; exec-form health checks.
+- **Web probes:** `/healthz` and `/readyz` on the web app. This fixes the deploy workflow's readiness check, which could never pass.
+- **Scripts:**
+  - `scripts/smoke.mjs` (read-only post-deploy smoke test);
+  - `scripts/stack-test.sh` (CI job `stack`);
+  - `scripts/check-migrations.mjs` with `db/migrations.lock`, run in CI.
+- **Deploy workflow:** production requires a successful staging deployment of the same SHA and a configurable protected release branch; the smoke test runs after readiness.
+- **Monitoring:** new gauges for the DB pool, ingestion runs, billing webhooks and social quota; a backup textfile metric; 23 alert rules (`infra/monitoring/alerts.yml`).
+- **Two backup defects fixed:**
+  - the restore drill reset the live app-role password;
+  - encrypted restores failed.
+- **Runbooks:** DEPLOYMENT.md (rewritten), DISASTER_RECOVERY_RUNBOOK.md, INCIDENT_RESPONSE_RUNBOOK.md, PILOT_OPERATIONS_RUNBOOK.md.
+
+**Results:**
+- 34 API suites / 590 tests, web 20/20, lint, typecheck and build pass;
+- secret scan, licences, `npm audit` (prod), shellcheck, hadolint, promtool and caddy validate are clean;
+- the stack test passed.
+
+**Not verified:**
+- **Real Dockerfile builds in this container.** There is no npm registry access from build containers; CI builds them.
+- Any remote deployment, registry push, DNS or TLS on a real domain, managed database or PITR, SMTP relay, AI key or monitoring stack.
+
+**Owner actions before staging:**
+- create and protect a release branch (the remote has no `main`);
+- make the repository private;
+- choose hosting;
+- create the GitHub environments, the deployment agent, secrets, domain, SMTP and monitoring.

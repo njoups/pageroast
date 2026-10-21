@@ -321,6 +321,10 @@ describe('security hardening (e2e)', () => {
       const m = await http().get('/metrics').set('Authorization', `Bearer ${'m'.repeat(40)}`).expect(200);
       expect(m.text).toContain('civicsignal_http_requests_total');
       expect(m.text).toContain('civicsignal_queue_jobs');
+      // P10 operational gauges: pool saturation, collection, billing webhooks, social quota (aggregates, never per tenant).
+      expect(m.text).toMatch(/civicsignal_db_pool_connections\{state="max"\} \d+/);
+      for (const g of ['civicsignal_ingestion_runs_last_hour', 'civicsignal_billing_webhook_failures_last_hour', 'civicsignal_social_quota_events_last_day']) expect(m.text).toContain(`# TYPE ${g} gauge`);
+      expect(m.text).not.toMatch(/tenant(_id)?="/);
       expect(m.text).not.toContain(A); expect(m.text).not.toMatch(/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/);
     });
 

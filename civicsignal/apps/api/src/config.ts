@@ -7,6 +7,8 @@ export interface AppConfig {
   databaseUrl: string;
   /** Owner/admin connection used only by migrations and operator CLIs. */
   migrationDatabaseUrl: string;
+  /** Connections per process in the application pool (API and worker each hold one pool). */
+  databasePoolMax: number;
   appOrigins: string[];
   sessionTtlSeconds: number;
   /** A session unused for this long is rejected (sliding idle timeout, in addition to the absolute TTL). */
@@ -85,8 +87,14 @@ export interface AppConfig {
     staleRunMinutes: number;           // a running job without heartbeat for this long is failed (abandoned)
     queuedTimeoutMinutes: number;      // a run still queued after this long is cancelled
   };
-  email: { smtpUrl: string | null; from: string | null };
-  whatsapp: { accessToken: string | null; phoneNumberId: string | null; templateName: string | null; templateLanguage: string; apiBaseUrl: string };
+  /**
+   * Outbound recipients. `null` = unrestricted. In staging the lists are mandatory or deny-all, so test workflows can
+   * never message real customers (docs/DEPLOYMENT.md, "Staging").
+   */
+  email: { smtpUrl: string | null; from: string | null; allowedDomains?: string[] | null };
+  whatsapp: { accessToken: string | null; phoneNumberId: string | null; templateName: string | null; templateLanguage: string; apiBaseUrl: string; allowedNumbers?: string[] | null };
+  /** Customer webhook receivers this environment may call (`null` = any host that passes the SSRF policy). */
+  webhookAllowedHosts: string[] | null;
   billing: {
     /** Payment provider adapter: 'none' (default; contract/manual billing only) or 'test' (local simulator; refused in production). */
     provider: 'none' | 'test';
@@ -121,11 +129,18 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
   };
   const appEnv = (env.APP_ENV || (prod ? 'production' : 'local')) as AppConfig['appEnv'];
   if (!['local', 'staging', 'production'].includes(appEnv)) throw new Error('APP_ENV must be local, staging or production');
+  const staging = appEnv === 'staging';
+  /** Comma-separated allow-list; unset means unrestricted, except in staging where unset means "nothing allowed". */
+  const list = (v: string | undefined, denyByDefault: boolean): string[] | null => {
+    const items = (v ?? '').split(',').map((x) => x.trim().toLowerCase()).filter(Boolean);
+    return items.length ? items : denyByDefault ? [] : null;
+  };
   const cfg: AppConfig = {
     nodeEnv, appEnv,
     port: Number(env.PORT ?? 4000),
     databaseUrl: required('DATABASE_URL'),
     migrationDatabaseUrl: env.MIGRATION_DATABASE_URL ?? required('DATABASE_URL'),
+    databasePoolMax: Number(env.DATABASE_POOL_MAX || 10),
     appOrigins: (env.APP_ORIGINS ?? 'http://localhost:3000').split(',').map((s) => s.trim()).filter(Boolean),
     sessionTtlSeconds: Number(env.SESSION_TTL_SECONDS ?? 12 * 3600),
     sessionIdleSeconds: Number(env.SESSION_IDLE_SECONDS ?? 2 * 3600),
@@ -197,12 +212,14 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
       staleRunMinutes: Number(env.REPORT_STALE_RUN_MINUTES || 15),
       queuedTimeoutMinutes: Number(env.REPORT_QUEUED_TIMEOUT_MINUTES || 120),
     },
-    email: { smtpUrl: env.SMTP_URL || null, from: env.EMAIL_FROM || null },
+    email: { smtpUrl: env.SMTP_URL || null, from: env.EMAIL_FROM || null, allowedDomains: list(env.NOTIFY_ALLOWED_EMAIL_DOMAINS, staging) },
     whatsapp: {
       accessToken: env.WHATSAPP_ACCESS_TOKEN || null, phoneNumberId: env.WHATSAPP_PHONE_NUMBER_ID || null,
       templateName: env.WHATSAPP_TEMPLATE_NAME || null, templateLanguage: env.WHATSAPP_TEMPLATE_LANGUAGE || 'id',
       apiBaseUrl: env.WHATSAPP_API_BASE_URL || 'https://graph.facebook.com/v21.0',
+      allowedNumbers: list(env.NOTIFY_ALLOWED_PHONE_NUMBERS, staging),
     },
+    webhookAllowedHosts: list(env.NOTIFY_ALLOWED_WEBHOOK_HOSTS, staging),
     billing: {
       provider: (env.BILLING_PROVIDER || 'none') as AppConfig['billing']['provider'],
       testWebhookSecret: env.BILLING_TEST_WEBHOOK_SECRET || null,
@@ -235,7 +252,8 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
     if (cfg.ai.provider === 'test') throw new Error('AI_PROVIDER=test is for automated tests only and is refused in production');
     if (cfg.ai.provider === 'anthropic' && !cfg.ai.anthropicApiKey) throw new Error('AI_PROVIDER=anthropic requires ANTHROPIC_API_KEY');
     if (cfg.alerts.webhookAllowHttp) throw new Error('ALERTS_WEBHOOK_ALLOW_HTTP is for tests only and is refused in production');
-    if (cfg.billing.provider === 'test') throw new Error('BILLING_PROVIDER=test is a local simulator and is refused in production');
+    // The simulator is how staging exercises billing without real money; only real production refuses it.
+    if (cfg.billing.provider === 'test' && !staging) throw new Error('BILLING_PROVIDER=test is a local simulator and is refused in production');
     if (env.YOUTUBE_API_BASE_URL) throw new Error('YOUTUBE_API_BASE_URL is for contract tests only and is refused in production');
   }
   if (prod && appEnv !== 'local') {
@@ -244,6 +262,24 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
     for (const o of cfg.appOrigins) if (!o.startsWith('https://')) throw new Error(`APP_ORIGINS must use https when APP_ENV=${appEnv} (got ${o})`);
     if (!cfg.appBaseUrl.startsWith('https://')) throw new Error(`APP_BASE_URL must use https when APP_ENV=${appEnv}`);
     if (!cfg.trustProxy) throw new Error(`TRUST_PROXY=true is required when APP_ENV=${appEnv} (the API must run behind the TLS edge proxy)`);
+    // Required in every deployed environment: connector credentials are encrypted with this key, operators need
+    // metrics, and password reset and alerts need email.
+    if (!cfg.credentialsKey) throw new Error(`CREDENTIALS_KEY is required when APP_ENV=${appEnv}`);
+    if (!cfg.metricsToken) throw new Error(`METRICS_TOKEN is required when APP_ENV=${appEnv} (monitoring scrapes /metrics)`);
+    if (!cfg.email.smtpUrl) throw new Error(`SMTP_URL and EMAIL_FROM are required when APP_ENV=${appEnv} (password reset and alerts)`);
+    if (staging && !env.NOTIFY_ALLOWED_EMAIL_DOMAINS) throw new Error('NOTIFY_ALLOWED_EMAIL_DOMAINS is required when APP_ENV=staging (test email must never reach real customers)');
+    if (appEnv === 'production' && env.API_DOCS_ENABLED === 'true') throw new Error('API_DOCS_ENABLED=true is refused when APP_ENV=production');
   }
+  if (cfg.databasePoolMax < 1 || cfg.databasePoolMax > 100) throw new Error('DATABASE_POOL_MAX must be between 1 and 100');
+  // A mistyped number (e.g. "30s") becomes NaN and would silently disable a limit or a schedule.
+  const bad: string[] = [];
+  const walk = (o: object, path: string) => {
+    for (const [k, v] of Object.entries(o)) {
+      if (typeof v === 'number' && !Number.isFinite(v)) bad.push(path + k);
+      else if (v && typeof v === 'object' && !Array.isArray(v)) walk(v, `${path}${k}.`);
+    }
+  };
+  walk(cfg, '');
+  if (bad.length) throw new Error(`Invalid numeric configuration: ${bad.join(', ')} (check the corresponding environment variables)`);
   return cfg;
 }
