@@ -18,7 +18,13 @@ repo="$(cd "$(dirname "$0")/.." && pwd)"
 work="$(mktemp -d)"; chmod 700 "$work"
 project="cs-stacktest-$$"
 C=(docker compose -p "$project" --env-file "$work/compose.env" -f "$repo/infra/compose.production.yml" --profile selfhosted-data)
-fail() { echo "STACK TEST FAILED: $*" >&2; "${C[@]}" ps >&2 || true; "${C[@]}" logs --no-color --tail 40 >&2 || true; exit 1; }
+fail() {
+  echo "STACK TEST FAILED: $*" >&2
+  "${C[@]}" ps -a >&2 || true
+  "${C[@]}" logs --no-color --tail 30 api worker web migrate db >&2 || true   # not the edge: its access log lines are huge
+  echo "STACK TEST FAILED: $*" >&2                                            # repeated so it is the last line in CI logs
+  exit 1
+}
 cleanup() { if [ "${KEEP_STACK:-0}" != 1 ]; then "${C[@]}" --profile migrate down -v --remove-orphans >/dev/null 2>&1 || true; rm -rf "$work"; else echo "kept: project $project, files $work"; fi; }
 trap cleanup EXIT
 
@@ -89,10 +95,11 @@ SMOKE_EMAIL=smoke@civicsignal.invalid SMOKE_PASSWORD="$smoke_pw" node -e '
     if(r.status!==201) throw new Error("organization "+r.status);
   })().catch(e=>{console.error(e.message);process.exit(1)})' || fail "could not create the smoke-test account"
 BASE_URL=https://localhost SMOKE_EMAIL=smoke@civicsignal.invalid SMOKE_PASSWORD="$smoke_pw" node "$repo/scripts/smoke.mjs" || fail "smoke test"
-docker exec "$(cid api)" node -e "fetch('http://localhost:4000/metrics').then(r=>process.exit(r.status===401?0:1))" || fail "/metrics answers without a token"
+m=$(docker exec "$(cid api)" node -e "fetch('http://localhost:4000/metrics').then(r=>console.log(r.status)).catch(e=>console.log(e.message))" 2>&1 || true)
+[ "$m" = 401 ] || fail "/metrics without a token answered: $m (expected 401)"
 # The documented first-start step (DEPLOYMENT.md): grant platform-admin rights through the migrate job's owner credentials.
-"${C[@]}" --profile migrate run --rm migrate node apps/api/dist/database/promote-platform-admin-cli.js smoke@civicsignal.invalid >/dev/null 2>&1 \
-  || fail "platform-admin bootstrap command failed"
+out=$("${C[@]}" --profile migrate run --rm migrate node apps/api/dist/database/promote-platform-admin-cli.js smoke@civicsignal.invalid 2>&1) \
+  || fail "platform-admin bootstrap command failed: $(tail -3 <<<"$out")"
 
 echo "[5/7] encrypted backup and restore drill (scratch database on the same server)"
 export GNUPGHOME="$work/gnupg"; mkdir -p "$GNUPGHOME"; chmod 700 "$GNUPGHOME"
