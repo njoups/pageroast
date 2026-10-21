@@ -68,7 +68,7 @@ powershell -ExecutionPolicy Bypass -File scripts\local-up.ps1     # Windows
 ```
 - App: http://localhost:3000.
 - Local email inbox (Mailpit; every email the app sends): http://localhost:8025.
-- Step-by-step guide in Indonesian: [docs/LOCAL_SETUP.md](docs/LOCAL_SETUP.md).
+- Step-by-step guide in Indonesian: [docs/LOCAL_SETUP.md](docs/LOCAL_SETUP.md). To let a Claude Code session on the laptop do it: [docs/LOCAL_SESSION_HANDOFF.md](docs/LOCAL_SESSION_HANDOFF.md).
 - Verified on 2026-10-21 in the development container: all services healthy, smoke test 18/18, password-reset email delivered to Mailpit. In that sandbox the images were assembled offline; the real Dockerfiles are built in CI.
 - Not yet tried on a physical Windows or macOS laptop.
 - Compose is for local use only (`APP_ENV=local`); staging and production are described in [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md).
