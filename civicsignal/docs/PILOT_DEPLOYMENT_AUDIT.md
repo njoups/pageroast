@@ -135,7 +135,7 @@ All commands ran in this development container (4 vCPU, Docker 29.8 with Compose
 | `cd apps/api && TEST_ADMIN_DATABASE_URL=… TEST_REDIS_URL=… npx jest` | **34 suites, 590 tests passed** (577 before; +13 for configuration, allow-lists and metrics) |
 | `cd apps/web && npm test` | 20/20 passed |
 | `npm run build` | exit 0 |
-| `node scripts/scan-secrets.mjs --history` | 326 files, 0 findings (31 allow-listed test fixtures) |
+| `node scripts/scan-secrets.mjs --history` | 343 files, 0 findings, 33 allow-listed. The first CI run (#23) flagged two lines of the new `stack-test.sh`: runtime-generated values written as `NAME=value`, no literal secret. The local scan had missed them because it covers tracked files only and ran before the new files were added. The lines now use `printf`; one documented allow-list entry covers the historical commit |
 | `node scripts/check-licenses.mjs` | exit 0 |
 | `npm audit --omit=dev --audit-level=high` | 0 vulnerabilities |
 | `node scripts/check-migrations.mjs` | 14 files, 14 locked, 0 new. A negative test (an edited locked migration, plus an unjustified DROP COLUMN and UPDATE without WHERE) was refused, and the lock step refused to proceed |
