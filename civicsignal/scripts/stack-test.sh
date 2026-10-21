@@ -11,7 +11,8 @@
 # 5. takes an encrypted backup (throwaway GPG key) and runs the restore drill, then checks the live API is unaffected;
 # 6. checks graceful shutdown and that no generated secret appears in any container log;
 # 7. removes the stack, its volumes and the temp dir (KEEP_STACK=1 keeps them for inspection).
-# Needs: docker compose v2, node 22, openssl, gpg, pg_dump/psql 16, python3. Uses ports 80 and 443.
+# Needs: docker compose v2, node 22 with the repository's dependencies installed (npm ci: the restore drill runs
+# migrations), openssl, gpg, pg_dump/psql 16, python3. Uses ports 80 and 443.
 set -euo pipefail
 : "${API_IMAGE:?set API_IMAGE}" "${WEB_IMAGE:?set WEB_IMAGE}"
 repo="$(cd "$(dirname "$0")/.." && pwd)"
@@ -107,7 +108,9 @@ gpg --batch --quiet --passphrase '' --quick-gen-key "stack-test <stack-test@civi
 ip=$(docker inspect -f '{{range .NetworkSettings.Networks}}{{.IPAddress}} {{end}}' "$(cid db)" | awk '{print $1}')
 MIGRATION_DATABASE_URL="postgres://civicsignal_owner:$pg@$ip:5432/civicsignal" BACKUP_GPG_RECIPIENT=stack-test@civicsignal.invalid \
   bash "$repo/scripts/backup.sh" "$work/stack.dump" >/dev/null || fail "backup"
-ADMIN_DATABASE_URL="postgres://civicsignal_owner:$pg@$ip:5432/postgres" bash "$repo/scripts/verify-restore.sh" "$work/stack.dump.gpg" | tail -1 || fail "restore drill"
+drill=$(ADMIN_DATABASE_URL="postgres://civicsignal_owner:$pg@$ip:5432/postgres" bash "$repo/scripts/verify-restore.sh" "$work/stack.dump.gpg" 2>&1) \
+  || fail "restore drill: $(tail -5 <<<"$drill" | tr '\n' ' ')"
+tail -1 <<<"$drill"
 "${C[@]}" restart api >/dev/null 2>&1 && "${C[@]}" up -d --wait api >/dev/null 2>&1 || fail "api not healthy after the restore drill (drill must not touch the live database or its role)"
 echo "  live API healthy after the drill (fresh connections)"
 
