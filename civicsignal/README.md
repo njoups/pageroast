@@ -60,14 +60,18 @@ Open http://localhost:3000, register, and create an organization.
 To make an operator a platform admin (tenant metadata only, no content access):
 `MIGRATION_DATABASE_URL=... npx tsx apps/api/src/database/promote-platform-admin-cli.ts you@example.com`
 
-## Run with Docker Compose
+## Run on a laptop with Docker (recommended)
+One command creates `.env` with random local secrets, picks free ports, builds and starts every service, and waits for health checks:
 ```bash
-cp .env.example .env    # fill every empty value (openssl rand -hex 24; CREDENTIALS_KEY: openssl rand -base64 32)
-docker compose up --build
+bash scripts/local-up.sh                                          # macOS / Linux / WSL
+powershell -ExecutionPolicy Bypass -File scripts\local-up.ps1     # Windows
 ```
-The api and web images were built and smoke-tested on 2026-10-20 (API readiness OK, web served `/login`, Trivy clean). A full
-`docker compose up` of all services together has not been run yet. Compose is for local use only (`APP_ENV=local`); staging and
-production are described in [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md).
+- App: http://localhost:3000.
+- Local email inbox (Mailpit; every email the app sends): http://localhost:8025.
+- Step-by-step guide in Indonesian: [docs/LOCAL_SETUP.md](docs/LOCAL_SETUP.md).
+- Verified on 2026-10-21 in the development container: all services healthy, smoke test 18/18, password-reset email delivered to Mailpit. In that sandbox the images were assembled offline; the real Dockerfiles are built in CI.
+- Not yet tried on a physical Windows or macOS laptop.
+- Compose is for local use only (`APP_ENV=local`); staging and production are described in [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md).
 
 ## Tests
 ```bash

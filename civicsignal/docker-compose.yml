@@ -1,5 +1,6 @@
-# Local development stack: Postgres, Redis (BullMQ), API, ingestion worker, web, and a Caddy edge proxy.
-# Staging and production use infra/compose.production.yml (images by digest, TLS edge, hardened containers).
+# Local stack for a laptop: Postgres, Redis (BullMQ), API, worker, web, a Caddy edge proxy and Mailpit (a local inbox
+# that catches every email the app sends). Quick start: scripts/local-up.sh (macOS/Linux) or scripts/local-up.ps1
+# (Windows); guide: docs/LOCAL_SETUP.md. Staging and production use infra/compose.production.yml instead.
 services:
   db:
     image: postgres:16
@@ -7,7 +8,7 @@ services:
       POSTGRES_USER: civicsignal_owner
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set in .env}
       POSTGRES_DB: civicsignal
-    ports: ["127.0.0.1:5432:5432"]
+    ports: ["127.0.0.1:${DB_HOST_PORT:-5432}:5432"]
     volumes: [pgdata:/var/lib/postgresql/data]
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U civicsignal_owner -d civicsignal"]
@@ -26,14 +27,17 @@ services:
       retries: 20
 
   migrate:
-    build: { context: ., dockerfile: apps/api/Dockerfile, target: build }
-    command: ["npm", "run", "migrate", "-w", "apps/api"]
+    # Same image as the API; migrations run with plain node, as in production.
+    image: civicsignal-api:local
+    build: { context: ., dockerfile: apps/api/Dockerfile }
+    command: ["node", "apps/api/dist/database/migrate-cli.js"]
     environment:
       MIGRATION_DATABASE_URL: postgres://civicsignal_owner:${POSTGRES_PASSWORD}@db:5432/civicsignal
       APP_DB_PASSWORD: ${APP_DB_PASSWORD:?set in .env}
     depends_on: { db: { condition: service_healthy } }
 
   api:
+    image: civicsignal-api:local
     build: { context: ., dockerfile: apps/api/Dockerfile }
     init: true
     environment:
@@ -57,14 +61,15 @@ services:
       AI_MODEL: ${AI_MODEL:-}
       AI_FALLBACK: ${AI_FALLBACK:-baseline}
       APP_BASE_URL: ${APP_BASE_URL:-http://localhost:3000}
-      SMTP_URL: ${SMTP_URL:-}
-      EMAIL_FROM: ${EMAIL_FROM:-}
+      SMTP_URL: ${SMTP_URL:-smtp://mail:1025}
+      EMAIL_FROM: ${EMAIL_FROM:-civicsignal@localhost.test}
       WHATSAPP_ACCESS_TOKEN: ${WHATSAPP_ACCESS_TOKEN:-}
       WHATSAPP_PHONE_NUMBER_ID: ${WHATSAPP_PHONE_NUMBER_ID:-}
       WHATSAPP_TEMPLATE_NAME: ${WHATSAPP_TEMPLATE_NAME:-}
     depends_on: { migrate: { condition: service_completed_successfully }, redis: { condition: service_healthy } }
 
   worker:
+    image: civicsignal-api:local
     build: { context: ., dockerfile: apps/api/Dockerfile }
     init: true
     command: ["node", "apps/api/dist/worker.js"]
@@ -87,14 +92,15 @@ services:
       AI_MODEL: ${AI_MODEL:-}
       AI_FALLBACK: ${AI_FALLBACK:-baseline}
       APP_BASE_URL: ${APP_BASE_URL:-http://localhost:3000}
-      SMTP_URL: ${SMTP_URL:-}
-      EMAIL_FROM: ${EMAIL_FROM:-}
+      SMTP_URL: ${SMTP_URL:-smtp://mail:1025}
+      EMAIL_FROM: ${EMAIL_FROM:-civicsignal@localhost.test}
       WHATSAPP_ACCESS_TOKEN: ${WHATSAPP_ACCESS_TOKEN:-}
       WHATSAPP_PHONE_NUMBER_ID: ${WHATSAPP_PHONE_NUMBER_ID:-}
       WHATSAPP_TEMPLATE_NAME: ${WHATSAPP_TEMPLATE_NAME:-}
     depends_on: { migrate: { condition: service_completed_successfully }, redis: { condition: service_healthy } }
 
   web:
+    image: civicsignal-web:local
     build: { context: ., dockerfile: apps/web/Dockerfile, args: { API_INTERNAL_URL: http://api:4000 } }
     init: true
     depends_on: { api: { condition: service_healthy } }
@@ -103,7 +109,17 @@ services:
     image: caddy:2
     volumes: ["./infra/Caddyfile:/etc/caddy/Caddyfile:ro"]
     depends_on: { web: { condition: service_healthy } }
-    ports: ["127.0.0.1:3000:8080"]
+    ports: ["127.0.0.1:${WEB_HOST_PORT:-3000}:8080"]
+
+  # Local inbox: every email (alerts, reports, password reset) lands here instead of a real mailbox.
+  # Open http://localhost:8025. Set SMTP_URL in .env to use a real relay instead.
+  mail:
+    image: axllent/mailpit:v1.27@sha256:e22dce5b36f93c77082e204a3942fb6b283b7896e057458400a4c88344c3df68
+    ports: ["127.0.0.1:${MAIL_HOST_PORT:-8025}:8025"]
+    healthcheck:
+      test: ["CMD", "/mailpit", "readyz"]
+      interval: 10s
+      retries: 10
 
 volumes:
   pgdata:
